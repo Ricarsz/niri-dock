@@ -145,6 +145,33 @@ pub(crate) fn save_pins(pins: &[String]) {
     }
 }
 
+/// 把用户挑的 .desktop 加进 pins；不在标准目录时复制到 ~/.local/share/applications
+pub(crate) fn adopt_desktop_file(path: &std::path::Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?.to_string();
+    if !name.ends_with(".desktop") {
+        return None;
+    }
+    let id = name.trim_end_matches(".desktop").to_string();
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let local = home.join(".local/share/applications");
+    let _ = std::fs::create_dir_all(&local);
+    let dest = local.join(&name);
+    if path != dest {
+        let _ = std::fs::copy(path, &dest);
+        let _ = std::fs::set_permissions(
+            &dest,
+            std::os::unix::fs::PermissionsExt::from_mode(0o644),
+        );
+    }
+    let cfg = load_config();
+    if !cfg.pins.iter().any(|p| p == &id) {
+        let mut pins = cfg.pins.clone();
+        pins.push(id.clone());
+        save_pins(&pins);
+    }
+    Some(id)
+}
+
 pub(crate) fn load_config() -> Config {
     let dir = config_dir();
     let path = dir.join("config.json");

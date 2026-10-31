@@ -5,7 +5,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use std::rc::Rc;
 
-use crate::config::{load_config, save_config, Config};
+use crate::config::{adopt_desktop_file, load_config, save_config, save_pins, Config};
 
 const CSS: &str = r#"
 window { background-color: #1c1c20; }
@@ -30,6 +30,131 @@ window { background-color: #1c1c20; }
 .dropdown { min-width: 132px; }
 .footer-hint { opacity: 0.5; font-size: 0.85em; }
 "#;
+
+type Refresh = Rc<std::cell::RefCell<Option<Rc<dyn Fn()>>>>;
+
+/// 「应用」分组：列出 dock 上的应用，可以移除，也可以从磁盘挑 .desktop 加进来
+fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
+    let cell: Refresh = Rc::new(std::cell::RefCell::new(None));
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    list.add_css_class("boxed-list");
+
+    let head = gtk::Label::new(Some("应用"));
+    head.set_xalign(0.0);
+    head.add_css_class("section-title");
+
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    wrap.append(&head);
+    wrap.append(&list);
+
+    {
+        let cell2 = cell.clone();
+        let list2 = list.clone();
+        let win = window.clone();
+        *cell.borrow_mut() = Some(Rc::new(move || {
+            while let Some(child) = list2.first_child() {
+                list2.remove(&child);
+            }
+            let cfg = load_config();
+            let entries = crate::desktop::load_entries();
+            for (i, pin) in cfg.pins.iter().enumerate() {
+                if i > 0 {
+                    list2.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+                }
+                let (name, icon) = entries
+                    .get(pin)
+                    .map(|e| (e.name.clone(), e.icon.clone()))
+                    .unwrap_or_else(|| (pin.clone(), String::new()));
+                let image = if icon.is_empty() {
+                    gtk::Image::from_icon_name("application-x-executable")
+                } else {
+                    gtk::Image::from_icon_name(&icon)
+                };
+                image.set_pixel_size(22);
+
+                let label = gtk::Label::new(Some(&name));
+                label.set_xalign(0.0);
+                label.set_hexpand(true);
+                label.add_css_class("row-title");
+
+                let del = gtk::Button::with_label("移除");
+                del.set_valign(gtk::Align::Center);
+                {
+                    let pin = pin.clone();
+                    let cell3 = cell2.clone();
+                    del.connect_clicked(move |_| {
+                        let cfg = load_config();
+                        let pins: Vec<String> =
+                            cfg.pins.into_iter().filter(|p| *p != pin).collect();
+                        save_pins(&pins);
+                        if let Some(f) = cell3.borrow().as_ref() {
+                            f();
+                        }
+                    });
+                }
+
+                let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                line.add_css_class("row");
+                line.append(&image);
+                line.append(&label);
+                line.append(&del);
+                list2.append(&line);
+            }
+
+            if !cfg.pins.is_empty() {
+                list2.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            }
+
+            let add = gtk::Button::with_label("从磁盘添加 .desktop…");
+            add.set_halign(gtk::Align::Start);
+            {
+                let cell3 = cell2.clone();
+                let win = win.clone();
+                add.connect_clicked(move |_| {
+                    let dialog = gtk::FileDialog::new();
+                    dialog.set_title("选择要添加到 dock 的应用");
+                    let filter = gtk::FileFilter::new();
+                    filter.set_name(Some("应用入口 (*.desktop)"));
+                    filter.add_pattern("*.desktop");
+                    let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+                    filters.append(&filter);
+                    dialog.set_filters(Some(&filters));
+                    dialog.set_default_filter(Some(&filter));
+                    dialog.set_initial_folder(Some(&gtk::gio::File::for_path(
+                        "/usr/share/applications",
+                    )));
+                    let cell4 = cell3.clone();
+                    dialog.open(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
+                        if let Ok(file) = res {
+                            if let Some(path) = file.path() {
+                                if adopt_desktop_file(&path).is_some() {
+                                    if let Some(f) = cell4.borrow().as_ref() {
+                                        f();
+                                    }
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+            let add_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            add_row.add_css_class("row");
+            add_row.append(&add);
+            list2.append(&add_row);
+        }));
+    }
+
+    {
+        let cell3 = cell.clone();
+        gtk::glib::idle_add_local_once(move || {
+            if let Some(f) = cell3.borrow().as_ref() {
+                f();
+            }
+        });
+    }
+
+    wrap
+}
 
 /// 一行：左侧标题 + 说明，右侧控件
 fn row(title: &str, hint: &str, suffix: &impl IsA<gtk::Widget>) -> gtk::Box {
@@ -362,7 +487,7 @@ pub fn run() -> glib::ExitCode {
 
         // 编辑模式入口：dock 进程负责真正进入编辑态
         let edit_btn = gtk::Button::with_label("编辑 dock 图标");
-        edit_btn.set_tooltip_text(Some("进入后可以拖动图标排序、点 × 删除、点 + 添加 .desktop"));
+        edit_btn.set_tooltip_text(Some("进入后拖动图标就能调整顺序，点 ✓ 退出"));
         edit_btn.connect_clicked(|_| {
             let _ = crate::cli::activate_action("edit");
         });
@@ -383,7 +508,7 @@ pub fn run() -> glib::ExitCode {
         }
 
         let footer = gtk::Label::new(Some(
-            "恢复默认只重置外观与行为，不动 dock 上的应用列表。",
+            "应用列表在上方「应用」里增删，顺序在 dock 的编辑模式里拖动调整；恢复默认只重置外观与行为。",
         ));
         footer.set_xalign(0.0);
         footer.set_wrap(true);
@@ -394,8 +519,10 @@ pub fn run() -> glib::ExitCode {
         body.set_margin_bottom(28);
         body.set_margin_start(20);
         body.set_margin_end(20);
+        let apps = apps_section(&window);
         body.append(&hero);
         body.append(&hero_sub);
+        body.append(&apps);
         body.append(&look);
         body.append(&place);
         body.append(&behavior);
