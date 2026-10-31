@@ -145,13 +145,6 @@ pub(crate) fn save_pins(pins: &[String]) {
     }
 }
 
-/// 只碰 mtime，不动内容：让 dock 的 600ms 配置监听触发重建
-pub(crate) fn poke_config() {
-    if let Ok(f) = std::fs::File::options().read(true).open(config_path()) {
-        let _ = f.set_modified(std::time::SystemTime::now());
-    }
-}
-
 pub(crate) fn load_config() -> Config {
     let dir = config_dir();
     let path = dir.join("config.json");

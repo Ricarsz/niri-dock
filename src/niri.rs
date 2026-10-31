@@ -64,7 +64,7 @@ pub(crate) fn fetch_all(windows: &Arc<Mutex<HashMap<i64, Win>>>) {
     else {
         return;
     };
-    let mut map = windows.lock().unwrap();
+    let mut map = windows.lock().unwrap_or_else(|e| e.into_inner());
     map.clear();
     for v in list {
         if let Some(w) = parse_win(v) {
@@ -111,12 +111,12 @@ pub(crate) fn spawn_event_thread(
             let mut changed = false;
             if let Some(v) = ev.get("WindowOpenedOrChanged").and_then(|v| v.get("window")) {
                 if let Some(w) = parse_win(v) {
-                    windows.lock().unwrap().insert(w.id, w);
+                    windows.lock().unwrap_or_else(|e| e.into_inner()).insert(w.id, w);
                     changed = true;
                 }
             }
             if let Some(v) = ev.get("WindowClosed").and_then(|v| v.get("id")).and_then(|v| v.as_i64()) {
-                windows.lock().unwrap().remove(&v);
+                windows.lock().unwrap_or_else(|e| e.into_inner()).remove(&v);
                 changed = true;
             }
             if let Some(list) = ev
@@ -124,7 +124,7 @@ pub(crate) fn spawn_event_thread(
                 .and_then(|v| v.get("windows"))
                 .and_then(|v| v.as_array())
             {
-                let mut map = windows.lock().unwrap();
+                let mut map = windows.lock().unwrap_or_else(|e| e.into_inner());
                 map.clear();
                 for v in list {
                     if let Some(w) = parse_win(v) {
@@ -135,7 +135,7 @@ pub(crate) fn spawn_event_thread(
             }
             if let Some(focused) = ev.get("WindowFocusChanged").and_then(|v| v.get("id")) {
                 let focused = focused.as_i64();
-                let mut map = windows.lock().unwrap();
+                let mut map = windows.lock().unwrap_or_else(|e| e.into_inner());
                 for w in map.values_mut() {
                     w.is_focused = Some(w.id) == focused;
                 }

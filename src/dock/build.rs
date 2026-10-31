@@ -13,7 +13,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-use crate::config::{load_config, poke_config, save_pins, Config};
+use crate::config::{load_config, save_pins, Config};
 use crate::desktop::*;
 use crate::niri::*;
 
@@ -25,7 +25,7 @@ pub(crate) fn dump_matches() {
     let entries = load_entries();
     let holder: Arc<Mutex<HashMap<i64, Win>>> = Arc::new(Mutex::new(HashMap::new()));
     fetch_all(&holder);
-    let map: HashMap<i64, Win> = holder.lock().unwrap().clone();
+    let map: HashMap<i64, Win> = holder.lock().unwrap_or_else(|e| e.into_inner()).clone();
     for pin in &cfg.pins {
         match entries.get(pin) {
             Some(e) => {
@@ -62,6 +62,15 @@ pub(crate) fn toggle_editing() -> bool {
     now
 }
 
+/// 拖放落点：落在目标图标右半边就插到它后面（from 先被移除，索引要相应回退一格）
+fn drop_index(from: usize, target: usize, right_half: bool) -> usize {
+    let mut to = if right_half { target + 1 } else { target };
+    if from < to {
+        to -= 1;
+    }
+    to
+}
+
 fn reorder_pins(from: usize, to: usize) {
     let cfg = load_config();
     let mut pins = cfg.pins;
@@ -71,14 +80,12 @@ fn reorder_pins(from: usize, to: usize) {
     let moved = pins.remove(from);
     pins.insert(to, moved);
     save_pins(&pins);
-    poke_config();
 }
 
 fn remove_pin(pin: &str) {
     let cfg = load_config();
     let pins: Vec<String> = cfg.pins.into_iter().filter(|p| p != pin).collect();
     save_pins(&pins);
-    poke_config();
 }
 
 /// 选中的 .desktop 不在标准目录里时，复制到 ~/.local/share/applications
@@ -103,7 +110,6 @@ fn adopt_desktop_file(path: &std::path::Path) -> Option<String> {
     if !cfg.pins.iter().any(|p| p == &id) {
         cfg.pins.push(id.clone());
         save_pins(&cfg.pins);
-        poke_config();
     }
     Some(id)
 }
@@ -134,6 +140,7 @@ pub(crate) fn build_ui(
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
     reuse_window: Option<gtk::ApplicationWindow>,
+    rebuild: &crate::cli::Rebuild,
 ) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>, Rc<Ui>) {
     // 重建时复用已有窗口：只换内容，不销毁/重建 surface
     // （每建一次窗口要多花 ~1.4MB 显存/纹理，而且会闪一下）
@@ -308,11 +315,14 @@ pub(crate) fn build_ui(
             let dst = gtk::DropTarget::new(u32::static_type(), gtk::gdk::DragAction::MOVE);
             {
                 let target = i;
-                dst.connect_drop(move |_, value, _, _| {
+                let drop_btn = button.clone();
+                dst.connect_drop(move |_, value, x, _| {
                     let Ok(from) = value.get::<u32>() else {
                         return false;
                     };
-                    reorder_pins(from as usize, target);
+                    let half = drop_btn.width() as f64 / 2.0;
+                    let to = drop_index(from as usize, target, x > half);
+                    reorder_pins(from as usize, to);
                     true
                 });
             }
@@ -354,7 +364,7 @@ pub(crate) fn build_ui(
             button.connect_clicked(move |_| {
                 let keys = match_keys(&e);
                 let mut ids: Vec<(i64, bool)> = {
-                    let map = u.windows.lock().unwrap();
+                    let map = u.windows.lock().unwrap_or_else(|e| e.into_inner());
                     map.values()
                         .filter(|w| app_matches(&keys, &w.app_id))
                         .map(|w| (w.id, w.is_focused))
@@ -426,7 +436,7 @@ pub(crate) fn build_ui(
                 b_quit.connect_clicked(move |_| {
                     let keys = match_keys(&e);
                     let ids: Vec<i64> = {
-                        let map = u.windows.lock().unwrap();
+                        let map = u.windows.lock().unwrap_or_else(|e| e.into_inner());
                         map.values()
                             .filter(|w| app_matches(&keys, &w.app_id))
                             .map(|w| w.id)
@@ -610,7 +620,7 @@ pub(crate) fn build_ui(
     window.present();
 
     // 横贯整条屏幕边的热区：鼠标碰到屏幕底边任何位置都能唤出 dock
-    if editing_mode {
+    if editing_mode || ui.cfg.pins.is_empty() {
         let add = gtk::Button::builder().has_frame(false).build();
         add.add_css_class("dock-item");
         add.add_css_class("dock-add");
@@ -618,6 +628,9 @@ pub(crate) fn build_ui(
         add.set_size_request(tile, tile);
         add.set_halign(gtk::Align::Center);
         add.set_valign(gtk::Align::Center);
+        if !editing_mode {
+            add.set_tooltip_text(Some("添加应用到 dock"));
+        }
         let label = gtk::Label::new(Some("+"));
         let px = cfg.icon_size.clamp(8, 256) / 2;
         label.set_markup(&format!("<span font_size='{px}pt'>+</span>"));
@@ -634,7 +647,10 @@ pub(crate) fn build_ui(
         // 放不进 panel 的话至少保证不被裁剪
         panel.append(&holder);
         buttons.push(add);
+    }
 
+    if editing_mode {
+        let tile = cfg.icon_size.clamp(8, 256) + 6;
         let done = gtk::Button::builder().has_frame(false).build();
         done.add_css_class("dock-item");
         done.add_css_class("dock-add");
@@ -652,10 +668,15 @@ pub(crate) fn build_ui(
         done_overlay.set_child(Some(&done));
         let done_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
         done_holder.append(&done_overlay);
-        done.connect_clicked(|_| {
-            crate::dock::toggle_editing();
-            crate::config::poke_config();
-        });
+        {
+            let r = rebuild.clone();
+            done.connect_clicked(move |_| {
+                crate::dock::toggle_editing();
+                if let Some(f) = r.borrow().as_ref() {
+                    f();
+                }
+            });
+        }
         panel.append(&done_holder);
     }
 
@@ -733,4 +754,28 @@ pub(crate) fn build_hot_window(
 
     win.present();
     win
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_index_moves_forward() {
+        // 0 -> 2 的右半边：插到 2 之后，移除 0 后是 2
+        assert_eq!(drop_index(0, 2, true), 2);
+        // 0 -> 2 的左半边：插到 2 之前，移除 0 后是 1
+        assert_eq!(drop_index(0, 2, false), 1);
+    }
+
+    #[test]
+    fn drop_index_moves_backward() {
+        assert_eq!(drop_index(3, 1, false), 1);
+        assert_eq!(drop_index(3, 1, true), 2);
+    }
+
+    #[test]
+    fn drop_index_stays_put() {
+        assert_eq!(drop_index(1, 1, false), 1);
+    }
 }

@@ -155,3 +155,33 @@ pub(crate) fn spawn_exec(exec: &str) {
     let _ = command.spawn();
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, wmclass: Option<&str>, exec: &str) -> AppEntry {
+        AppEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            icon: "icon".into(),
+            exec: exec.to_string(),
+            wmclass: wmclass.map(|s| s.to_string()),
+        }
+    }
+
+    #[test]
+    fn matches_by_id_wmclass_and_binary() {
+        let e = entry("org.gnome.Nautilus", Some("Nautilus"), "/usr/bin/nautilus --new-window %U");
+        let keys = match_keys(&e);
+        assert!(app_matches(&keys, "org.gnome.Nautilus"));
+        assert!(app_matches(&keys, "nautilus"));
+        assert!(!app_matches(&keys, "firefox"));
+    }
+
+    #[test]
+    fn empty_app_id_never_matches() {
+        let keys = match_keys(&entry("foot", None, "foot"));
+        assert!(!app_matches(&keys, ""));
+    }
+}

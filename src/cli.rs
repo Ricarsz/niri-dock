@@ -4,7 +4,6 @@
 //! （start/stop/restart/status），要么通过 D-Bus 调用 dock 注册的 GAction
 //! （toggle/show/hide/reload/quit），不引入额外的守护进程或 socket 协议。
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::env;
 use std::path::PathBuf;
@@ -188,9 +187,6 @@ fn print_status() {
     match running_pid() {
         Some(pid) => {
             say!("运行中 (pid {pid})");
-            if activate_action("status") {
-                // dock 侧会把详细信息写进日志，这里只保证动作可用
-            }
         }
         None => say!("未运行"),
     }
@@ -304,7 +300,13 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
 }
 
 /// 在 dock 进程里注册可被 CLI 触发的 GAction
-pub(crate) fn register_actions(app: &gtk::Application, ui: &std::rc::Rc<crate::dock::Ui>) {
+pub(crate) type Rebuild = std::rc::Rc<std::cell::RefCell<Option<std::rc::Rc<dyn Fn()>>>>;
+
+pub(crate) fn register_actions(
+    app: &gtk::Application,
+    ui: &std::rc::Rc<crate::dock::Ui>,
+    rebuild: &Rebuild,
+) {
     let add = |name: &str, f: Box<dyn Fn()>| {
         let action = gio::SimpleAction::new(name, None);
         action.connect_activate(move |_, _| f());
@@ -333,21 +335,31 @@ pub(crate) fn register_actions(app: &gtk::Application, ui: &std::rc::Rc<crate::d
     );
 
     let u = ui.clone();
-    add(
-        "reload",
-        Box::new(move || {
-            u.refresh_dots();
-        }),
-    );
+    {
+        let r = rebuild.clone();
+        add(
+            "reload",
+            Box::new(move || {
+                u.refresh_dots();
+                if let Some(f) = r.borrow().as_ref() {
+                    f();
+                }
+            }),
+        );
+    }
 
     // 图标编辑模式：开关后让 dock 重建面板，编辑控件在 build_ui 里按状态生成
     {
         let u = ui.clone();
+        let r = rebuild.clone();
         add(
             "edit",
             Box::new(move || {
                 let now = crate::dock::toggle_editing();
-                crate::config::poke_config();
+                // 直接重建面板：编辑控件由 build_ui 按 EDITING 生成
+                if let Some(f) = r.borrow().as_ref() {
+                    f();
+                }
                 // 编辑模式下别自动隐藏，否则一松手就滑走了
                 if now {
                     u.show();
@@ -357,5 +369,3 @@ pub(crate) fn register_actions(app: &gtk::Application, ui: &std::rc::Rc<crate::d
     }
 }
 
-#[allow(dead_code)]
-fn _silence_unused(_: HashMap<String, String>) {}

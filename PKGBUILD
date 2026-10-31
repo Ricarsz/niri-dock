@@ -1,6 +1,6 @@
 # Maintainer: Ricarsz <ricarsz@users.noreply.github.com>
 pkgname=niri-dock
-pkgver=0.3.1
+pkgver=0.3.2
 pkgrel=1
 pkgdesc="macOS-style dock for the niri Wayland compositor"
 arch=('x86_64')

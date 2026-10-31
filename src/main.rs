@@ -64,9 +64,18 @@ fn main() -> glib::ExitCode {
         let mut cfg = load_config();
         apply_css(&cfg);
         cfg = load_config();
-        let (win, hot, ui) = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone(), None);
+        let trigger: cli::Rebuild = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let (win, hot, ui) = build_ui(
+            app,
+            cfg,
+            entries.clone(),
+            windows.clone(),
+            epoch.clone(),
+            None,
+            &trigger,
+        );
         *current.borrow_mut() = Some(ui.clone());
-        cli::register_actions(app, &ui);
+        cli::register_actions(app, &ui, &trigger);
         cli::write_pid();
         let slot: Rc<RefCell<Option<(gtk::ApplicationWindow, Option<gtk::ApplicationWindow>)>>> =
             Rc::new(RefCell::new(Some((win, hot))));
@@ -78,6 +87,7 @@ fn main() -> glib::ExitCode {
             let windows2 = windows.clone();
             let epoch2 = epoch.clone();
             let last_pos: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+            let trigger2 = trigger.clone();
             Rc::new(move || {
                 let cfg = load_config();
                 apply_css(&cfg);
@@ -96,13 +106,20 @@ fn main() -> glib::ExitCode {
                     .unwrap_or(false);
                 let reuse = if same_pos { old_win.clone() } else { None };
                 *last_pos.borrow_mut() = cfg.position.to_ascii_lowercase();
-                let (win, hot, ui) =
-                    build_ui(&app2, cfg, entries, windows2.clone(), epoch2.clone(), reuse.clone());
+                let (win, hot, ui) = build_ui(
+                    &app2,
+                    cfg,
+                    entries,
+                    windows2.clone(),
+                    epoch2.clone(),
+                    reuse.clone(),
+                    &trigger2,
+                );
                 if was_shown {
                     ui.show();
                 }
                 *current2.borrow_mut() = Some(ui.clone());
-                cli::register_actions(&app2, &ui);
+                cli::register_actions(&app2, &ui, &trigger2);
                 *slot2.borrow_mut() = Some((win, hot));
                 if let Some(o) = old_win {
                     if Some(&o) != reuse.as_ref() {
@@ -114,6 +131,8 @@ fn main() -> glib::ExitCode {
                 }
             })
         };
+
+        *trigger.borrow_mut() = Some(rebuild.clone());
 
         let dir = gtk::gio::File::for_path(config::config_dir());
         let monitor = dir.monitor_directory(gtk::gio::FileMonitorFlags::WATCH_MOVES, gtk::gio::Cancellable::NONE);

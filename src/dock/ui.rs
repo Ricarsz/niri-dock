@@ -41,7 +41,7 @@ pub(crate) struct Ui {
 impl Ui {
     pub(crate) fn window_for(&self, entry: &AppEntry) -> Option<i64> {
         let keys = match_keys(entry);
-        let map = self.windows.lock().unwrap();
+        let map = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         let mut best: Option<&Win> = None;
         for w in map.values() {
             if !app_matches(&keys, &w.app_id) {
