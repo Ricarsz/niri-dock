@@ -13,6 +13,12 @@ pub(crate) struct AppEntry {
     pub(crate) exec: String,
     pub(crate) icon: String,
     pub(crate) wmclass: Option<String>,
+    /// Hidden=true：应用已被用户删除（或来自旧版本），彻底不可用
+    pub(crate) hidden: bool,
+    /// NoDisplay=true：不该出现在菜单/列表里，但仍然可以启动
+    pub(crate) no_display: bool,
+    /// TryExec：这个程序不存在时，条目其实点了也起不来
+    pub(crate) try_exec: Option<String>,
 }
 
 pub(crate) fn data_dirs() -> Vec<PathBuf> {
@@ -55,6 +61,9 @@ pub(crate) fn parse_desktop(id: &str, path: &Path) -> Option<AppEntry> {
             "Exec" => entry.exec = v.to_string(),
             "Icon" => entry.icon = v.to_string(),
             "StartupWMClass" => entry.wmclass = Some(v.to_string()),
+            "Hidden" => entry.hidden = v.trim().eq_ignore_ascii_case("true"),
+            "NoDisplay" => entry.no_display = v.trim().eq_ignore_ascii_case("true"),
+            "TryExec" => entry.try_exec = Some(v.to_string()),
             _ => {}
         }
     }
@@ -65,6 +74,40 @@ pub(crate) fn parse_desktop(id: &str, path: &Path) -> Option<AppEntry> {
         entry.name = id.to_string();
     }
     Some(entry)
+}
+
+fn which(cmd: &str) -> bool {
+    let p = Path::new(cmd);
+    if p.is_absolute() {
+        return p.is_file();
+    }
+    env::var("PATH")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|d| !d.is_empty())
+        .any(|d| Path::new(d).join(cmd).is_file())
+}
+
+/// 能不能出现在「添加应用」列表里
+pub(crate) fn is_offered(entry: &AppEntry) -> bool {
+    if entry.hidden || entry.no_display {
+        return false;
+    }
+    match entry.try_exec.as_deref() {
+        Some(t) if !t.trim().is_empty() => which(t.trim()),
+        _ => true,
+    }
+}
+
+/// 还没加到 dock 上、可以挑来添加的应用，按名字排序
+pub(crate) fn available_entries(pins: &[String]) -> Vec<AppEntry> {
+    let mut out: Vec<AppEntry> = load_entries()
+        .into_values()
+        .filter(|e| !pins.iter().any(|p| p == &e.id))
+        .filter(is_offered)
+        .collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
 }
 
 pub(crate) fn load_entries() -> HashMap<String, AppEntry> {
@@ -160,6 +203,43 @@ pub(crate) fn spawn_exec(exec: &str) {
 mod tests {
     use super::*;
 
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn write_desktop(path: &Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn available_entries_dedupe_and_filter() {
+        let _guard = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let root = std::env::temp_dir().join(format!("niri-dock-avail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let user = root.join("a/applications");
+        let system = root.join("b/applications");
+        // 同名 id：用户目录优先
+        write_desktop(&user.join("dup.desktop"), "[Desktop Entry]\nName=From User\nExec=dup %U\n");
+        write_desktop(&system.join("dup.desktop"), "[Desktop Entry]\nName=From System\nExec=dup %U\n");
+        write_desktop(&user.join("hidden.desktop"), "[Desktop Entry]\nName=Ghost\nExec=ghost\nHidden=true\n");
+        write_desktop(&user.join("silent.desktop"), "[Desktop Entry]\nName=Silent\nExec=silent\nNoDisplay=true\n");
+        write_desktop(&user.join("broken.desktop"), "[Desktop Entry]\nName=Broken\nExec=broken\nTryExec=nope-does-not-exist-xyz\n");
+        write_desktop(&user.join("good.desktop"), "[Desktop Entry]\nName=Good\nExec=good\n");
+
+        std::env::set_var("XDG_DATA_HOME", root.join("a"));
+        std::env::set_var("XDG_DATA_DIRS", root.join("b"));
+        let ids: Vec<String> = available_entries(&[]).into_iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec!["dup".to_string(), "good".to_string()]);
+        // 已在 dock 上的不会再出现在候选里
+        let ids: Vec<String> = available_entries(&["dup".to_string()])
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, vec!["good".to_string()]);
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("XDG_DATA_DIRS");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     fn entry(id: &str, wmclass: Option<&str>, exec: &str) -> AppEntry {
         AppEntry {
             id: id.to_string(),
@@ -167,6 +247,7 @@ mod tests {
             icon: "icon".into(),
             exec: exec.to_string(),
             wmclass: wmclass.map(|s| s.to_string()),
+            ..Default::default()
         }
     }
 
@@ -177,6 +258,24 @@ mod tests {
         assert!(app_matches(&keys, "org.gnome.Nautilus"));
         assert!(app_matches(&keys, "nautilus"));
         assert!(!app_matches(&keys, "firefox"));
+    }
+
+    #[test]
+    fn hidden_and_nodisplay_are_not_offered() {
+        let mut e = entry("thing", None, "thing");
+        assert!(is_offered(&e));
+        e.no_display = true;
+        assert!(!is_offered(&e));
+        e.no_display = false;
+        e.hidden = true;
+        assert!(!is_offered(&e));
+    }
+
+    #[test]
+    fn missing_try_exec_is_not_offered() {
+        let mut e = entry("ghost", None, "ghost");
+        e.try_exec = Some("definitely-not-a-real-binary-xyz".into());
+        assert!(!is_offered(&e));
     }
 
     #[test]

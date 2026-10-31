@@ -5,7 +5,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use std::rc::Rc;
 
-use crate::config::{adopt_desktop_file, load_config, save_config, save_pins, Config};
+use crate::config::{load_config, save_config, save_pins, Config};
 
 const CSS: &str = r#"
 window { background-color: #1c1c20; }
@@ -34,8 +34,10 @@ window { background-color: #1c1c20; }
 type Refresh = Rc<std::cell::RefCell<Option<Rc<dyn Fn()>>>>;
 
 /// 「应用」分组：列出 dock 上的应用，可以移除，也可以从磁盘挑 .desktop 加进来
-fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
+fn apps_section() -> gtk::Box {
     let cell: Refresh = Rc::new(std::cell::RefCell::new(None));
+    let candidates: Rc<std::cell::RefCell<Vec<String>>> =
+        Rc::new(std::cell::RefCell::new(Vec::new()));
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     list.add_css_class("boxed-list");
 
@@ -50,7 +52,7 @@ fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
     {
         let cell2 = cell.clone();
         let list2 = list.clone();
-        let win = window.clone();
+        let candidates = candidates.clone();
         *cell.borrow_mut() = Some(Rc::new(move || {
             while let Some(child) = list2.first_child() {
                 list2.remove(&child);
@@ -105,41 +107,58 @@ fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
                 list2.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
             }
 
-            let add = gtk::Button::with_label("从磁盘添加 .desktop…");
-            add.set_halign(gtk::Align::Start);
+            // 自动探测本机已安装的 .desktop：去重、隐藏的排除、按名字排序
+            let available = crate::desktop::available_entries(&cfg.pins);
+            *candidates.borrow_mut() = available.iter().map(|e| e.id.clone()).collect();
+            let names: Vec<&str> = available.iter().map(|e| e.name.as_str()).collect();
+            let dropdown = gtk::DropDown::from_strings(&names);
+            dropdown.set_hexpand(true);
+            dropdown.set_enable_search(true);
+            if available.is_empty() {
+                dropdown.set_sensitive(false);
+            }
+
+            let add = gtk::Button::with_label("添加");
+            add.set_valign(gtk::Align::Center);
+            add.set_sensitive(!available.is_empty());
             {
                 let cell3 = cell2.clone();
-                let win = win.clone();
+                let candidates2 = candidates.clone();
+                let dropdown2 = dropdown.clone();
                 add.connect_clicked(move |_| {
-                    let dialog = gtk::FileDialog::new();
-                    dialog.set_title("选择要添加到 dock 的应用");
-                    let filter = gtk::FileFilter::new();
-                    filter.set_name(Some("应用入口 (*.desktop)"));
-                    filter.add_pattern("*.desktop");
-                    let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
-                    filters.append(&filter);
-                    dialog.set_filters(Some(&filters));
-                    dialog.set_default_filter(Some(&filter));
-                    dialog.set_initial_folder(Some(&gtk::gio::File::for_path(
-                        "/usr/share/applications",
-                    )));
-                    let cell4 = cell3.clone();
-                    dialog.open(Some(&win), gtk::gio::Cancellable::NONE, move |res| {
-                        if let Ok(file) = res {
-                            if let Some(path) = file.path() {
-                                if adopt_desktop_file(&path).is_some() {
-                                    if let Some(f) = cell4.borrow().as_ref() {
-                                        f();
-                                    }
-                                }
-                            }
-                        }
-                    });
+                    let idx = dropdown2.selected() as usize;
+                    let Some(id) = candidates2.borrow().get(idx).cloned() else {
+                        return;
+                    };
+                    let mut cfg = load_config();
+                    if cfg.pins.iter().any(|p| p == &id) {
+                        return;
+                    }
+                    cfg.pins.push(id);
+                    save_pins(&cfg.pins);
+                    if let Some(f) = cell3.borrow().as_ref() {
+                        f();
+                    }
                 });
             }
-            let add_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+
+            let hint = if available.is_empty() {
+                "没有可添加的应用（全部已添加，或被 NoDisplay / Hidden / TryExec 过滤）".to_string()
+            } else {
+                format!("从本机已安装的 {} 个应用里挑：", available.len())
+            };
+            let label = gtk::Label::new(Some(&hint));
+            label.set_xalign(0.0);
+            label.add_css_class("hint");
+
+            let picker = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            picker.append(&dropdown);
+            picker.append(&add);
+
+            let add_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
             add_row.add_css_class("row");
-            add_row.append(&add);
+            add_row.append(&label);
+            add_row.append(&picker);
             list2.append(&add_row);
         }));
     }
@@ -519,7 +538,7 @@ pub fn run() -> glib::ExitCode {
         body.set_margin_bottom(28);
         body.set_margin_start(20);
         body.set_margin_end(20);
-        let apps = apps_section(&window);
+        let apps = apps_section();
         body.append(&hero);
         body.append(&hero_sub);
         body.append(&apps);

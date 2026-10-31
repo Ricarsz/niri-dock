@@ -117,9 +117,13 @@ niri-dock edit
   右半边插到它后面，松开立即写回配置
 - **✓**：退出编辑模式
 
-增删应用在设置窗口的「应用」一栏做：点「移除」把应用移出 dock；点
-「从磁盘添加 .desktop…」挑一个 `.desktop`，不在标准目录里的会先复制到
-`~/.local/share/applications/` 再添加到列表。
+增删应用都在设置窗口的「应用」一栏：
+
+- 点「移除」把应用移出 dock
+- 添加时不用手动挑文件：窗口会自动扫描本机的 `.desktop`（`XDG_DATA_HOME`、
+  `XDG_DATA_DIRS` 里的 `applications/`），列出还没加进来的应用，选中点「添加」即可
+- 列表已按 desktop id 去重（用户目录优先），并过滤掉 `NoDisplay=true`、
+  `Hidden=true` 以及 `TryExec` 指向的程序不存在的条目
 
 改动只动 `config.json` 里的 `pins` 数组，其他配置项和未知字段保持不变。
 
