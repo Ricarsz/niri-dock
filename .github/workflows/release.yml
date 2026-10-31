@@ -50,8 +50,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          # 只上传构建产物；LICENSE/README 由仓库本身承载，不再作为 release asset
-          assets=("/out/$(basename "$pkg")" "/out/niri-dock-${version}-x86_64.tar.gz")
+          # 每个 step 都是独立 shell：上一步的 $pkg / $version 在这里不存在，
+          # 之前就是因为引用未定义变量 + set -u 直接挂掉。
+          # 用具名 glob，不依赖上一步的变量，名字对不上也会立刻暴露
+          assets=(/out/*.pkg.tar.zst /out/niri-dock-*-x86_64.tar.gz)
+          test "${#assets[@]}" -eq 2
+          ls -l "${assets[@]}"
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "niri-dock ${GITHUB_REF_NAME#v}" \
