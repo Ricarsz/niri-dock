@@ -5,7 +5,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use std::rc::Rc;
 
-use crate::{load_config, save_config, Config};
+use crate::config::{load_config, save_config, Config};
 
 const CSS: &str = r#"
 window { background-color: #1c1c20; }

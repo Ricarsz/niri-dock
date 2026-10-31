@@ -26,10 +26,10 @@
 paru -U niri-dock-<version>-1-x86_64.pkg.tar.zst
 ```
 
-或者用仓库里的 `PKGBUILD` 自己构建安装：
+或者用仓库里的 `PKGBUILD` 自己构建安装（构建目录放外面，免得和源码 `src/` 打架）：
 
 ```sh
-makepkg -si
+BUILDDIR=/tmp/niri-dock-build makepkg -si
 ```
 
 只想编个二进制、不装系统包：
