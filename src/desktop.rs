@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
+use crate::{log_debug};
 
 // ─────────────────────── desktop 条目 ───────────────────────
 
@@ -101,6 +102,7 @@ pub(crate) fn is_offered(entry: &AppEntry) -> bool {
 
 /// 还没加到 dock 上、可以挑来添加的应用，按名字排序
 pub(crate) fn available_entries(pins: &[String]) -> Vec<AppEntry> {
+    log_debug!("desktop", "候选筛选：已固定 {} 个", pins.len());
     let mut out: Vec<AppEntry> = load_entries()
         .into_values()
         .filter(|e| !pins.iter().any(|p| p == &e.id))

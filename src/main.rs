@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod desktop;
 mod dock;
+mod log;
 mod niri;
 mod settings;
 mod style;
@@ -42,6 +43,13 @@ fn main() -> glib::ExitCode {
     });
 
     app.connect_activate(move |app| {
+        log_info!(
+            "main",
+            "niri-dock {} 启动 (pid {})，日志 {}",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id(),
+            log::log_file().display()
+        );
         let entries = Rc::new(load_entries());
         let windows: Arc<Mutex<HashMap<i64, Win>>> = Arc::new(Mutex::new(HashMap::new()));
         let epoch = Arc::new(AtomicU64::new(0));
@@ -62,6 +70,14 @@ fn main() -> glib::ExitCode {
         }
 
         let mut cfg = load_config();
+        log_info!(
+            "config",
+            "{} 个图标，位置 {}，主题 {}",
+            cfg.pins.len(),
+            cfg.position,
+            cfg.theme
+        );
+        log_debug!("config", "配置目录 {}", config::config_dir().display());
         apply_css(&cfg);
         cfg = load_config();
         let trigger: cli::Rebuild = std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -89,6 +105,7 @@ fn main() -> glib::ExitCode {
             let last_pos: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
             let trigger2 = trigger.clone();
             Rc::new(move || {
+                log_debug!("rebuild", "开始重建面板");
                 let cfg = load_config();
                 apply_css(&cfg);
                 // 重新扫一遍 desktop，编辑模式里新加的应用才能立刻拿到名字和图标
@@ -166,7 +183,7 @@ fn main() -> glib::ExitCode {
                 std::mem::forget(monitor);
             }
             Err(err) => {
-                eprintln!("niri-dock: 无法监视配置目录，退回轮询: {err}");
+                log_warn!("config", "无法监视配置目录，退回轮询: {err}");
                 let last = Rc::new(RefCell::new(config_mtime()));
                 glib::timeout_add_local(Duration::from_millis(600), move || {
                     let now = config_mtime();

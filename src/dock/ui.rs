@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::log_debug;
 use gtk4 as gtk;
 use gtk::prelude::*;
 
@@ -85,6 +86,7 @@ impl Ui {
         if self.shown.get() {
             return;
         }
+        log_debug!("dock", "显示面板");
         self.revealer.set_visible(true);
         self.revealer.set_reveal_child(true);
         self.shown.set(true);
@@ -93,8 +95,10 @@ impl Ui {
 
     pub(crate) fn hide(&self) {
         if !self.shown.get() || self.menu_open.get() > 0 {
+            log_debug!("dock", "忽略隐藏请求（已隐藏或菜单开着）");
             return;
         }
+        log_debug!("dock", "隐藏面板");
         self.close_menus();
         self.revealer.set_reveal_child(false);
         self.shown.set(false);

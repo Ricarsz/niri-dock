@@ -120,11 +120,12 @@ niri-dock edit
 增删应用都在设置窗口的「应用」一栏：
 
 - 点「移除」把应用移出 dock
-- 添加时不用手动挑文件：窗口会自动扫描本机的 `.desktop`（`XDG_DATA_HOME`、
-  `XDG_DATA_DIRS` 里的 `applications/`），列出还没加进来的应用，选中点「添加」即可
+- 点「添加应用…」打开多选框：窗口会自动扫描本机的 `.desktop`（`XDG_DATA_HOME`、
+  `XDG_DATA_DIRS` 里的 `applications/`），列出还没加进来的应用，可以搜索、
+  一次勾选多个，点「添加选中」一起加
 - 列表已按 desktop id 去重（用户目录优先），并过滤掉 `NoDisplay=true`、
   `Hidden=true` 以及 `TryExec` 指向的程序不存在的条目
-- 每个应用名字下面都标着对应的 `.desktop` 文件名，下拉框里也是「名字 · 文件名」，
+- 每个应用名字下面都标着对应的 `.desktop` 文件名，多选框里也是「名字 · 文件名」，
   方便对不上号的时候确认到底是哪个条目
 
 改动只动 `config.json` 里的 `pins` 数组，其他配置项和未知字段保持不变。
@@ -176,10 +177,19 @@ niri-dock edit
 
 ```sh
 niri-dock --dump                  # 打印每个 pin 匹配到的窗口
+niri-dock logs                    # 看最近 120 行日志
+NIRI_DOCK_LOG=debug niri-dock restart   # 用调试级别重跑，细节全进日志
 NIRI_DOCK_HOVER=2 niri-dock       # 固定第 3 个图标为悬停态（截图用）
 NIRI_DOCK_BOUNCE=1 niri-dock      # 启动时触发一次弹跳
 NIRI_DOCK_MENU=2 niri-dock        # 直接弹出第 3 个图标的右键菜单
+NIRI_DOCK_ADD_DIALOG=1 niri-dock --settings   # 直接打开「添加应用」多选框
 ```
+
+日志写在 `~/.local/state/niri-dock/dock.log`（遵循 `XDG_STATE_HOME`），
+级别用 `NIRI_DOCK_LOG` 控制：`off` / `error` / `warn` / `info`（默认）/ `debug`。
+`niri-dock start` 会把 dock 自己的 stderr 重定向进这个文件，所以后台运行时的
+报错不会丢。日志里能看到：启动与配置、niri 连接与窗口事件、面板显示/隐藏、
+重建原因、编辑模式的排序/增删。
 
 ## 已知限制
 

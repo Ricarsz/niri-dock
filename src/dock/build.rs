@@ -9,6 +9,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::log_debug;
 use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -59,6 +60,7 @@ pub(crate) fn editing() -> bool {
 pub(crate) fn toggle_editing() -> bool {
     let now = !editing();
     EDITING.store(now, Ordering::Relaxed);
+    log_debug!("edit", "编辑模式 {}", if now { "开" } else { "关" });
     now
 }
 
@@ -78,6 +80,7 @@ fn reorder_pins(from: usize, to: usize) {
         return;
     }
     let moved = pins.remove(from);
+    log_debug!("edit", "移动 {moved}：{from} -> {to}");
     pins.insert(to, moved);
     save_pins(&pins);
 }
@@ -94,6 +97,7 @@ pub(crate) fn build_ui(
     // 重建时复用已有窗口：只换内容，不销毁/重建 surface
     // （每建一次窗口要多花 ~1.4MB 显存/纹理，而且会闪一下）
     let reused = reuse_window.is_some();
+    log_debug!("build", "构建面板：{} 个图标，复用窗口={reused}", cfg.pins.len());
     let window = match reuse_window {
         Some(w) => w,
         None => {

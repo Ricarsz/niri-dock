@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
+use crate::{log_debug, log_info};
 // ───────────────────────── niri IPC ─────────────────────────
 
 #[derive(Debug, Clone, Default)]
@@ -98,6 +99,7 @@ pub(crate) fn spawn_event_thread(
             std::thread::sleep(Duration::from_secs(2));
             continue;
         }
+        log_info!("niri", "已连接 {}", path.display());
         let reader = BufReader::new(stream);
         let mut lines = reader.lines();
         let _ = lines.next(); // EventStream 的应答
@@ -106,16 +108,24 @@ pub(crate) fn spawn_event_thread(
         let _ = tx.try_send(());
 
         for line in lines {
-            let Ok(text) = line else { break };
-            let Ok(ev) = serde_json::from_str::<Value>(&text) else { continue };
+            let Ok(text) = line else {
+                log_info!("niri", "事件流结束，准备重连");
+                break;
+            };
+            let Ok(ev) = serde_json::from_str::<Value>(&text) else {
+                log_debug!("niri", "跳过无法解析的事件: {text}");
+                continue;
+            };
             let mut changed = false;
             if let Some(v) = ev.get("WindowOpenedOrChanged").and_then(|v| v.get("window")) {
                 if let Some(w) = parse_win(v) {
+                    log_debug!("niri", "窗口变化 id={} app={}", w.id, w.app_id);
                     windows.lock().unwrap_or_else(|e| e.into_inner()).insert(w.id, w);
                     changed = true;
                 }
             }
             if let Some(v) = ev.get("WindowClosed").and_then(|v| v.get("id")).and_then(|v| v.as_i64()) {
+                log_debug!("niri", "窗口关闭 id={v}");
                 windows.lock().unwrap_or_else(|e| e.into_inner()).remove(&v);
                 changed = true;
             }
@@ -124,6 +134,7 @@ pub(crate) fn spawn_event_thread(
                 .and_then(|v| v.get("windows"))
                 .and_then(|v| v.as_array())
             {
+                log_debug!("niri", "窗口列表更新，共 {} 个", list.len());
                 let mut map = windows.lock().unwrap_or_else(|e| e.into_inner());
                 map.clear();
                 for v in list {
@@ -135,6 +146,7 @@ pub(crate) fn spawn_event_thread(
             }
             if let Some(focused) = ev.get("WindowFocusChanged").and_then(|v| v.get("id")) {
                 let focused = focused.as_i64();
+                log_debug!("niri", "焦点切换 {focused:?}");
                 let mut map = windows.lock().unwrap_or_else(|e| e.into_inner());
                 for w in map.values_mut() {
                     w.is_focused = Some(w.id) == focused;

@@ -30,6 +30,7 @@ pub(crate) enum Cmd {
     Hide,
     Reload,
     Edit,
+    Logs,
     Quit,
     Version,
     Help,
@@ -63,6 +64,7 @@ pub(crate) fn parse(args: &[String]) -> Cmd {
         Some("hide") => Cmd::Hide,
         Some("reload") => Cmd::Reload,
         Some("edit") => Cmd::Edit,
+        Some("logs") | Some("log") => Cmd::Logs,
         Some("quit") => Cmd::Quit,
         Some("settings") | Some("--settings") => Cmd::Settings,
         Some("dump") | Some("--dump") => Cmd::Dump,
@@ -148,11 +150,22 @@ fn spawn_detached() -> bool {
         return false;
     };
     let home = env::var_os("HOME").map(PathBuf::from);
+    // 把 dock 自己的 stderr 落到日志文件，`niri-dock logs` 才能看到
+    let log_path = crate::log::log_file();
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|err| crate::log_warn!("logs", "打不开日志文件 {}: {err}", log_path.display()))
+        .ok();
     let mut cmd = Command::new("setsid");
     cmd.arg(exe)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(log.as_ref().map(|f| f.try_clone().ok()).flatten().map(Stdio::from).unwrap_or_else(Stdio::null))
+        .stderr(log.map(Stdio::from).unwrap_or_else(Stdio::null));
     if let Some(home) = home {
         cmd.current_dir(home);
     }
@@ -182,6 +195,33 @@ fn stop_running() -> bool {
     true
 }
 
+/// 往日志文件追加一行（CLI 是短命进程，stderr 不会留在文件里）
+fn note_to_log(msg: &str) {
+    let path = crate::log::log_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{}  {:5} {:<8} {msg}", crate::log::stamp(), "info", "cli");
+    }
+}
+
+/// `niri-dock logs`：打印日志文件路径和最后 120 行
+fn print_logs() {
+    let path = crate::log::log_file();
+    say!("日志 {}", path.display());
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let lines: Vec<&str> = text.lines().collect();
+            let start = lines.len().saturating_sub(120);
+            for line in &lines[start..] {
+                say!("{line}");
+            }
+        }
+        Err(err) => say!("读不到日志: {err}"),
+    }
+}
+
 fn print_status() {
     let cfg_path = crate::config::config_path();
     match running_pid() {
@@ -192,6 +232,7 @@ fn print_status() {
     }
     say!("版本    {}", env!("CARGO_PKG_VERSION"));
     say!("配置    {}", cfg_path.display());
+    say!("日志    {}（niri-dock logs）", crate::log::log_file().display());
     let cfg = crate::config::load_config();
     say!(
         "外观    icon {} / slot {} / spacing {} / {}, {}",
@@ -247,7 +288,12 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
             print_status();
             Some(glib::ExitCode::SUCCESS)
         }
+        Cmd::Logs => {
+            print_logs();
+            Some(glib::ExitCode::SUCCESS)
+        }
         Cmd::Start => {
+            note_to_log("start");
             if running_pid().is_some() {
                 let _ = activate_action("show");
                 say!("已在运行");
@@ -260,6 +306,7 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
             Some(glib::ExitCode::SUCCESS)
         }
         Cmd::Stop | Cmd::Quit => {
+            note_to_log("stop");
             if stop_running() {
                 say!("已停止");
             } else {
@@ -285,6 +332,7 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
                 Cmd::Edit => "edit",
                 _ => "reload",
             };
+            note_to_log(action);
             if running_pid().is_none() {
                 eprintln!("dock 没在运行（先 niri-dock start）");
                 return Some(glib::ExitCode::FAILURE);

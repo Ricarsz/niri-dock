@@ -1,6 +1,7 @@
 //! niri-dock 的设置窗口：所有改动直接写回 ~/.config/niri-dock/config.json，
 //! dock 进程每 600ms 检查一次文件时间戳，改了会自动重建面板。
 
+use crate::log_info;
 use gtk4 as gtk;
 use gtk::prelude::*;
 use std::rc::Rc;
@@ -34,7 +35,7 @@ window { background-color: #1c1c20; }
 type Refresh = Rc<std::cell::RefCell<Option<Rc<dyn Fn()>>>>;
 
 /// 「应用」分组：列出 dock 上的应用，可以移除，也可以从磁盘挑 .desktop 加进来
-fn apps_section() -> gtk::Box {
+fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
     let cell: Refresh = Rc::new(std::cell::RefCell::new(None));
     let candidates: Rc<std::cell::RefCell<Vec<String>>> =
         Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -53,6 +54,7 @@ fn apps_section() -> gtk::Box {
         let cell2 = cell.clone();
         let list2 = list.clone();
         let candidates = candidates.clone();
+        let window = window.clone();
         *cell.borrow_mut() = Some(Rc::new(move || {
             while let Some(child) = list2.first_child() {
                 list2.remove(&child);
@@ -118,59 +120,36 @@ fn apps_section() -> gtk::Box {
             // 自动探测本机已安装的 .desktop：去重、隐藏的排除、按名字排序
             let available = crate::desktop::available_entries(&cfg.pins);
             *candidates.borrow_mut() = available.iter().map(|e| e.id.clone()).collect();
-            let names: Vec<String> = available
-                .iter()
-                .map(|e| format!("{}   ·   {}.desktop", e.name, e.id))
-                .collect();
-            let names: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-            let dropdown = gtk::DropDown::from_strings(&names);
-            dropdown.set_hexpand(true);
-            dropdown.set_enable_search(true);
-            if available.is_empty() {
-                dropdown.set_sensitive(false);
-            }
-
-            let add = gtk::Button::with_label("添加");
-            add.set_valign(gtk::Align::Center);
-            add.set_sensitive(!available.is_empty());
-            {
-                let cell3 = cell2.clone();
-                let candidates2 = candidates.clone();
-                let dropdown2 = dropdown.clone();
-                add.connect_clicked(move |_| {
-                    let idx = dropdown2.selected() as usize;
-                    let Some(id) = candidates2.borrow().get(idx).cloned() else {
-                        return;
-                    };
-                    let mut cfg = load_config();
-                    if cfg.pins.iter().any(|p| p == &id) {
-                        return;
-                    }
-                    cfg.pins.push(id);
-                    save_pins(&cfg.pins);
-                    if let Some(f) = cell3.borrow().as_ref() {
-                        f();
-                    }
-                });
-            }
 
             let hint = if available.is_empty() {
                 "没有可添加的应用（全部已添加，或被 NoDisplay / Hidden / TryExec 过滤）".to_string()
             } else {
-                format!("从本机已安装的 {} 个应用里挑：", available.len())
+                format!("本机已安装 {} 个可用应用，可以一次选多个", available.len())
             };
             let label = gtk::Label::new(Some(&hint));
             label.set_xalign(0.0);
             label.add_css_class("hint");
 
-            let picker = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            picker.append(&dropdown);
-            picker.append(&add);
+            let add = gtk::Button::with_label("添加应用…");
+            add.set_halign(gtk::Align::Start);
+            add.set_sensitive(!available.is_empty());
+            {
+                let cell3 = cell2.clone();
+                let win = window.clone();
+                add.connect_clicked(move |_| {
+                    let f = cell3.clone();
+                    open_add_dialog(&win, Rc::new(move || {
+                        if let Some(cb) = f.borrow().as_ref() {
+                            cb();
+                        }
+                    }));
+                });
+            }
 
-            let add_row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            let add_row = gtk::Box::new(gtk::Orientation::Vertical, 8);
             add_row.add_css_class("row");
             add_row.append(&label);
-            add_row.append(&picker);
+            add_row.append(&add);
             list2.append(&add_row);
         }));
     }
@@ -185,6 +164,120 @@ fn apps_section() -> gtk::Box {
     }
 
     wrap
+}
+
+/// 多选对话框：搜索 + 复选框列表，确认后一次性把选中的应用加进 pins
+fn open_add_dialog(parent: &gtk::ApplicationWindow, on_added: Rc<dyn Fn()>) {
+    let cfg = load_config();
+    let available = crate::desktop::available_entries(&cfg.pins);
+
+    let dialog = gtk::Window::builder()
+        .title("添加应用到 dock")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(560)
+        .default_height(620)
+        .build();
+
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some("搜索应用名或 .desktop 文件名"));
+
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.add_css_class("boxed-list");
+
+    let rows: Rc<std::cell::RefCell<Vec<(String, String, gtk::CheckButton)>>> =
+        Rc::new(std::cell::RefCell::new(Vec::new()));
+
+    for entry in &available {
+        let check = gtk::CheckButton::new();
+        let name = gtk::Label::new(Some(&entry.name));
+        name.set_xalign(0.0);
+        name.add_css_class("row-title");
+        let file = gtk::Label::new(Some(&format!("{}.desktop", entry.id)));
+        file.set_xalign(0.0);
+        file.add_css_class("hint");
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        text.append(&name);
+        text.append(&file);
+
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        line.add_css_class("row");
+        line.append(&check);
+        line.append(&text);
+        list.append(&line);
+        rows.borrow_mut().push((entry.id.clone(), entry.name.clone(), check));
+    }
+
+    // 搜索只过滤，不重建列表
+    {
+        let rows = rows.clone();
+        search.connect_search_changed(move |s| {
+            let q = s.text().to_lowercase();
+            for (id, name, check) in rows.borrow().iter() {
+                let row = check.parent().and_then(|p| p.parent());
+                if let Some(w) = row {
+                    let hit = q.is_empty()
+                        || name.to_lowercase().contains(&q)
+                        || id.to_lowercase().contains(&q);
+                    w.set_visible(hit);
+                }
+            }
+        });
+    }
+
+    let cancel = gtk::Button::with_label("取消");
+    {
+        let d = dialog.clone();
+        cancel.connect_clicked(move |_| d.close());
+    }
+    let confirm = gtk::Button::with_label("添加选中");
+    confirm.add_css_class("suggested-action");
+    {
+        let d = dialog.clone();
+        let rows = rows.clone();
+        confirm.connect_clicked(move |_| {
+            let picked: Vec<String> = rows
+                .borrow()
+                .iter()
+                .filter(|(_, _, c)| c.is_active())
+                .map(|(id, _, _)| id.clone())
+                .collect();
+            log_info!("settings", "添加 {} 个应用: {}", picked.len(), picked.join(", "));
+            if !picked.is_empty() {
+                let mut cfg = load_config();
+                for id in picked {
+                    if !cfg.pins.iter().any(|p| p == &id) {
+                        cfg.pins.push(id);
+                    }
+                }
+                save_pins(&cfg.pins);
+                on_added();
+            }
+            d.close();
+        });
+    }
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::End);
+    actions.append(&cancel);
+    actions.append(&confirm);
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&list)
+        .vexpand(true)
+        .build();
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    body.set_margin_top(16);
+    body.set_margin_bottom(16);
+    body.set_margin_start(16);
+    body.set_margin_end(16);
+    body.append(&search);
+    body.append(&scroll);
+    body.append(&actions);
+    dialog.set_child(Some(&body));
+    dialog.present();
 }
 
 /// 一行：左侧标题 + 说明，右侧控件
@@ -550,7 +643,7 @@ pub fn run() -> glib::ExitCode {
         body.set_margin_bottom(28);
         body.set_margin_start(20);
         body.set_margin_end(20);
-        let apps = apps_section();
+        let apps = apps_section(&window);
         body.append(&hero);
         body.append(&hero_sub);
         body.append(&apps);
@@ -572,6 +665,12 @@ pub fn run() -> glib::ExitCode {
 
         window.set_child(Some(&scroll));
         window.present();
+
+        // 调试用：直接打开「添加应用」多选框，方便截图
+        if std::env::var("NIRI_DOCK_ADD_DIALOG").is_ok() {
+            let noop: Rc<dyn Fn()> = Rc::new(|| {});
+            open_add_dialog(&window, noop);
+        }
     });
 
     // 忽略进程参数，否则 GTK 会把 --settings 当成未知选项
