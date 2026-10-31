@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gtk4 as gtk;
 use gtk::prelude::*;
@@ -29,11 +29,13 @@ pub(crate) struct Ui {
     pub(crate) panel: gtk::Box,
     pub(crate) window: gtk::ApplicationWindow,
     pub(crate) shown: Rc<std::cell::Cell<bool>>,
-    pub(crate) hide_at: RefCell<Option<Instant>>,
+    /// 自动隐藏的一次性定时器（只在需要时存在，空闲时不开任何轮询）
+    pub(crate) hide_src: RefCell<Option<glib::SourceId>>,
     /// 右键菜单展开的数量：菜单开着时不能隐藏 dock，否则菜单跟着一起消失
     pub(crate) menu_open: std::cell::Cell<usize>,
     pub(crate) popovers: RefCell<Vec<gtk::Popover>>,
-    pub(crate) menu_close_at: RefCell<Option<Instant>>,
+    /// 指针离开菜单后延时收起菜单的定时器
+    pub(crate) menu_src: RefCell<Option<glib::SourceId>>,
 }
 
 impl Ui {
@@ -86,7 +88,7 @@ impl Ui {
         self.revealer.set_visible(true);
         self.revealer.set_reveal_child(true);
         self.shown.set(true);
-        *self.hide_at.borrow_mut() = None;
+        self.cancel_hide();
     }
 
     pub(crate) fn hide(&self) {
@@ -109,12 +111,41 @@ impl Ui {
         });
     }
 
-    pub(crate) fn schedule_hide(&self) {
+    pub(crate) fn cancel_hide(&self) {
+        if let Some(id) = self.hide_src.borrow_mut().take() {
+            id.remove();
+        }
+    }
+
+    /// 安排一次自动隐藏：用一次性定时器，代替原来的 120ms 轮询。
+    pub(crate) fn schedule_hide(self: &Rc<Self>) {
         if !self.cfg.autohide {
             return;
         }
-        *self.hide_at.borrow_mut() =
-            Some(Instant::now() + Duration::from_millis(self.cfg.hide_delay_ms));
+        self.cancel_hide();
+        let me = self.clone();
+        let delay = self.cfg.hide_delay_ms;
+        let id = glib::timeout_add_local_once(Duration::from_millis(delay), move || {
+            *me.hide_src.borrow_mut() = None;
+            me.hide();
+        });
+        *self.hide_src.borrow_mut() = Some(id);
+    }
+
+    pub(crate) fn cancel_menu_close(&self) {
+        if let Some(id) = self.menu_src.borrow_mut().take() {
+            id.remove();
+        }
+    }
+
+    pub(crate) fn schedule_menu_close(self: &Rc<Self>, delay_ms: u64) {
+        self.cancel_menu_close();
+        let me = self.clone();
+        let id = glib::timeout_add_local_once(Duration::from_millis(delay_ms), move || {
+            *me.menu_src.borrow_mut() = None;
+            me.close_menus();
+        });
+        *self.menu_src.borrow_mut() = Some(id);
     }
 
     /// 悬停变化时只切 CSS 类：真正插值由 GTK 的 CSS transition 在合成层上跑，

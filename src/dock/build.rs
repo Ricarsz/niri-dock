@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gtk4 as gtk;
 use gtk::prelude::*;
@@ -133,12 +133,28 @@ pub(crate) fn build_ui(
     entries: Rc<HashMap<String, AppEntry>>,
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
+    reuse_window: Option<gtk::ApplicationWindow>,
 ) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>, Rc<Ui>) {
-    let window = gtk::ApplicationWindow::builder()
-        .application(app)
-        .decorated(false)
-        .resizable(false)
-        .build();
+    // 重建时复用已有窗口：只换内容，不销毁/重建 surface
+    // （每建一次窗口要多花 ~1.4MB 显存/纹理，而且会闪一下）
+    let reused = reuse_window.is_some();
+    let window = match reuse_window {
+        Some(w) => w,
+        None => {
+            let w = gtk::ApplicationWindow::builder()
+                .application(app)
+                .decorated(false)
+                .resizable(false)
+                .build();
+            w.init_layer_shell();
+            w.set_namespace(Some("niri-dock"));
+            w.set_layer(Layer::Top);
+            w.set_margin(Edge::Bottom, 0);
+            w.set_exclusive_zone(0);
+            w.set_keyboard_mode(KeyboardMode::None);
+            w
+        }
+    };
 
     let editing_mode = editing();
     if editing_mode {
@@ -148,9 +164,6 @@ pub(crate) fn build_ui(
     let position = cfg.position.to_ascii_lowercase();
     let horizontal = !matches!(position.as_str(), "left" | "right");
 
-    window.init_layer_shell();
-    window.set_namespace(Some("niri-dock"));
-    window.set_layer(Layer::Top);
     let edge = match position.as_str() {
         "top" => Edge::Top,
         "left" => Edge::Left,
@@ -159,8 +172,6 @@ pub(crate) fn build_ui(
     };
     window.set_anchor(edge, true);
     window.set_margin(edge, 0);
-    window.set_exclusive_zone(0);
-    window.set_keyboard_mode(KeyboardMode::None);
 
     let panel = gtk::Box::new(
         if horizontal { gtk::Orientation::Horizontal } else { gtk::Orientation::Vertical },
@@ -197,10 +208,10 @@ pub(crate) fn build_ui(
         panel: panel.clone(),
         window: window.clone(),
         shown: Rc::new(std::cell::Cell::new(true)),
-        hide_at: RefCell::new(None),
+        hide_src: RefCell::new(None),
         menu_open: std::cell::Cell::new(0),
         popovers: RefCell::new(Vec::new()),
-        menu_close_at: RefCell::new(None),
+        menu_src: RefCell::new(None),
     });
 
     let mut buttons: Vec<gtk::Button> = Vec::new();
@@ -316,7 +327,7 @@ pub(crate) fn build_ui(
                     return;
                 }
                 u.show();
-                *u.hide_at.borrow_mut() = None;
+                u.cancel_hide();
                 if u.hover.get() != Some(i) {
                     u.hover.set(Some(i));
                     u.apply_magnification();
@@ -434,12 +445,11 @@ pub(crate) fn build_ui(
                 let u = ui.clone();
                 let motion = gtk::EventControllerMotion::new();
                 motion.connect_enter(move |_, _, _| {
-                    *u.menu_close_at.borrow_mut() = None;
+                    u.cancel_menu_close();
                 });
                 let u2 = ui.clone();
                 motion.connect_leave(move |_| {
-                    *u2.menu_close_at.borrow_mut() =
-                        Some(Instant::now() + Duration::from_millis(500));
+                    u2.schedule_menu_close(500);
                 });
                 bx.add_controller(motion);
             }
@@ -450,7 +460,7 @@ pub(crate) fn build_ui(
             let u = ui.clone();
             pop.connect_show(move |_| {
                 u.menu_open.set(u.menu_open.get() + 1);
-                *u.hide_at.borrow_mut() = None;
+                u.cancel_hide();
             });
             let u = ui.clone();
             pop.connect_closed(move |_| {
@@ -551,7 +561,7 @@ pub(crate) fn build_ui(
         let motion = gtk::EventControllerMotion::new();
         motion.connect_enter(move |_, _, _| {
             u.show();
-            *u.hide_at.borrow_mut() = None;
+            u.cancel_hide();
         });
         let u2 = ui.clone();
         motion.connect_leave(move |_| {
@@ -568,47 +578,12 @@ pub(crate) fn build_ui(
         });
         window.add_controller(motion);
 
-        let u3 = ui.clone();
-        glib::timeout_add_local(Duration::from_millis(120), move || {
-            let due = match *u3.hide_at.borrow() {
-                Some(t) => Instant::now() >= t,
-                None => false,
-            };
-            if due {
-                if u3.menu_open.get() == 0 {
-                    u3.hide();
-                }
-                *u3.hide_at.borrow_mut() = None;
-            }
-            let close = match *u3.menu_close_at.borrow() {
-                Some(t) => Instant::now() >= t,
-                None => false,
-            };
-            if close {
-                *u3.menu_close_at.borrow_mut() = None;
-                u3.close_menus();
-            }
-            glib::ControlFlow::Continue
-        });
-
-        if env::var("NIRI_DOCK_HOVER").is_err() {
+        if !reused && env::var("NIRI_DOCK_HOVER").is_err() {
             let u4 = ui.clone();
             glib::timeout_add_local_once(Duration::from_millis(2500), move || u4.hide());
         }
     }
 
-    {
-        let u = ui.clone();
-        let last = std::cell::Cell::new(u64::MAX);
-        glib::timeout_add_local(Duration::from_millis(120), move || {
-            let e = u.epoch.load(Ordering::SeqCst);
-            if last.get() != e {
-                last.set(e);
-                u.refresh_dots();
-            }
-            glib::ControlFlow::Continue
-        });
-    }
 
     if let Ok(v) = env::var("NIRI_DOCK_HOVER") {
         if let Ok(n) = v.parse::<usize>() {
@@ -752,7 +727,7 @@ pub(crate) fn build_hot_window(
     let motion = gtk::EventControllerMotion::new();
     motion.connect_enter(move |_, _, _| {
         u.show();
-        *u.hide_at.borrow_mut() = None;
+        u.cancel_hide();
     });
     strip.add_controller(motion);
 

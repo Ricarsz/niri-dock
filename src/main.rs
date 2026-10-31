@@ -45,40 +45,120 @@ fn main() -> glib::ExitCode {
         let entries = Rc::new(load_entries());
         let windows: Arc<Mutex<HashMap<i64, Win>>> = Arc::new(Mutex::new(HashMap::new()));
         let epoch = Arc::new(AtomicU64::new(0));
-        spawn_event_thread(windows.clone(), epoch.clone());
+        // 事件驱动的圆点刷新通道：niri 事件线程 → GTK 主循环，空闲时零唤醒
+        let (tx, rx) = async_channel::unbounded::<()>();
+        spawn_event_thread(windows.clone(), epoch.clone(), tx.clone());
+
+        let current: Rc<RefCell<Option<Rc<dock::Ui>>>> = Rc::new(RefCell::new(None));
+        {
+            let current = current.clone();
+            glib::spawn_future_local(async move {
+                while rx.recv().await.is_ok() {
+                    if let Some(ui) = current.borrow().as_ref().cloned() {
+                        ui.refresh_dots();
+                    }
+                }
+            });
+        }
 
         let mut cfg = load_config();
         apply_css(&cfg);
         cfg = load_config();
-        let (win, hot, ui) = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone());
+        let (win, hot, ui) = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone(), None);
+        *current.borrow_mut() = Some(ui.clone());
         cli::register_actions(app, &ui);
         cli::write_pid();
         let slot: Rc<RefCell<Option<(gtk::ApplicationWindow, Option<gtk::ApplicationWindow>)>>> =
             Rc::new(RefCell::new(Some((win, hot))));
-        let last = Rc::new(RefCell::new(config_mtime()));
-
-        let app2 = app.clone();
-        let slot2 = slot.clone();
-        glib::timeout_add_local(Duration::from_millis(600), move || {
-            let now = config_mtime();
-            if now != *last.borrow() {
-                *last.borrow_mut() = now;
+        // 配置变化：用 inotify 的目录监视替代 600ms 轮询；事件再做一个 120ms 防抖。
+        let rebuild = {
+            let app2 = app.clone();
+            let slot2 = slot.clone();
+            let current2 = current.clone();
+            let windows2 = windows.clone();
+            let epoch2 = epoch.clone();
+            let last_pos: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+            Rc::new(move || {
                 let cfg = load_config();
                 apply_css(&cfg);
                 // 重新扫一遍 desktop，编辑模式里新加的应用才能立刻拿到名字和图标
                 let entries = Rc::new(load_entries());
-                let (win, hot, ui) = build_ui(&app2, cfg, entries, windows.clone(), epoch.clone());
+                // 位置没变就复用窗口（不重建 surface），变了才新建
+                let same_pos = *last_pos.borrow() == cfg.position.to_ascii_lowercase();
+                let (old_win, old_hot) = match &*slot2.borrow() {
+                    Some((w, h)) => (Some(w.clone()), h.clone()),
+                    None => (None, None),
+                };
+                let was_shown = current2
+                    .borrow()
+                    .as_ref()
+                    .map(|u| u.shown.get())
+                    .unwrap_or(false);
+                let reuse = if same_pos { old_win.clone() } else { None };
+                *last_pos.borrow_mut() = cfg.position.to_ascii_lowercase();
+                let (win, hot, ui) =
+                    build_ui(&app2, cfg, entries, windows2.clone(), epoch2.clone(), reuse.clone());
+                if was_shown {
+                    ui.show();
+                }
+                *current2.borrow_mut() = Some(ui.clone());
                 cli::register_actions(&app2, &ui);
-                let old = slot2.borrow_mut().replace((win, hot));
-                if let Some((o, h)) = old {
-                    o.close();
-                    if let Some(h) = h {
-                        h.close();
+                *slot2.borrow_mut() = Some((win, hot));
+                if let Some(o) = old_win {
+                    if Some(&o) != reuse.as_ref() {
+                        o.close();
                     }
                 }
+                if let Some(h) = old_hot {
+                    h.close();
+                }
+            })
+        };
+
+        let dir = gtk::gio::File::for_path(config::config_dir());
+        let monitor = dir.monitor_directory(gtk::gio::FileMonitorFlags::WATCH_MOVES, gtk::gio::Cancellable::NONE);
+        match monitor {
+            Ok(monitor) => {
+                let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+                monitor.connect_changed(move |_, file, _, event| {
+                    let is_cfg = file
+                        .basename()
+                        .map(|b| b.to_string_lossy() == "config.json")
+                        .unwrap_or(false);
+                    if !is_cfg {
+                        return;
+                    }
+                    use gtk::gio::FileMonitorEvent as E;
+                    if !matches!(event, E::Changed | E::Created | E::ChangesDoneHint | E::MovedIn) {
+                        return;
+                    }
+                    if let Some(id) = pending.borrow_mut().take() {
+                        id.remove();
+                    }
+                    let rebuild = rebuild.clone();
+                    let pending2 = pending.clone();
+                    let id = glib::timeout_add_local_once(Duration::from_millis(120), move || {
+                        *pending2.borrow_mut() = None;
+                        rebuild();
+                    });
+                    *pending.borrow_mut() = Some(id);
+                });
+                // 监视器必须活着
+                std::mem::forget(monitor);
             }
-            glib::ControlFlow::Continue
-        });
+            Err(err) => {
+                eprintln!("niri-dock: 无法监视配置目录，退回轮询: {err}");
+                let last = Rc::new(RefCell::new(config_mtime()));
+                glib::timeout_add_local(Duration::from_millis(600), move || {
+                    let now = config_mtime();
+                    if now != *last.borrow() {
+                        *last.borrow_mut() = now;
+                        rebuild();
+                    }
+                    glib::ControlFlow::Continue
+                });
+            }
+        }
     });
 
     app.connect_shutdown(|_| cli::clear_pid());

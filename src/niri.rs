@@ -73,7 +73,11 @@ pub(crate) fn fetch_all(windows: &Arc<Mutex<HashMap<i64, Win>>>) {
     }
 }
 
-pub(crate) fn spawn_event_thread(windows: Arc<Mutex<HashMap<i64, Win>>>, epoch: Arc<AtomicU64>) {
+pub(crate) fn spawn_event_thread(
+    windows: Arc<Mutex<HashMap<i64, Win>>>,
+    epoch: Arc<AtomicU64>,
+    tx: async_channel::Sender<()>,
+) {
     std::thread::spawn(move || loop {
         let Some(path) = socket_path() else {
             std::thread::sleep(Duration::from_secs(2));
@@ -99,6 +103,7 @@ pub(crate) fn spawn_event_thread(windows: Arc<Mutex<HashMap<i64, Win>>>, epoch: 
         let _ = lines.next(); // EventStream 的应答
         fetch_all(&windows);
         epoch.fetch_add(1, Ordering::SeqCst);
+        let _ = tx.try_send(());
 
         for line in lines {
             let Ok(text) = line else { break };
@@ -138,6 +143,8 @@ pub(crate) fn spawn_event_thread(windows: Arc<Mutex<HashMap<i64, Win>>>, epoch: 
             }
             if changed {
                 epoch.fetch_add(1, Ordering::SeqCst);
+                // 事件驱动：窗口集合变化时通知 UI 立即刷新圆点，不再靠 120ms 轮询
+                let _ = tx.try_send(());
             }
         }
         std::thread::sleep(Duration::from_millis(500));
