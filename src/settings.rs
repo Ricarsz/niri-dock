@@ -154,7 +154,7 @@ fn choice(
 
 pub fn run() -> glib::ExitCode {
     let app = gtk::Application::builder()
-        .application_id("com.ricarse.niridock.settings")
+        .application_id("io.github.ricarsz.niridock.settings")
         .build();
 
     app.connect_activate(|app| {
@@ -300,6 +300,26 @@ pub fn run() -> glib::ExitCode {
                     |c, v| c.autohide = v,
                 ),
                 number(
+                    "触发区高度",
+                    "屏幕这条边上的触发带宽（像素），横贯整条边；鼠标碰到就弹出",
+                    cfg.hot_zone as f64,
+                    1.0,
+                    32.0,
+                    1.0,
+                    0,
+                    |c, v| c.hot_zone = v.round() as i32,
+                ),
+                number(
+                    "动画时长",
+                    "dock 滑出与收起用的时间（毫秒），大了更从容",
+                    cfg.reveal_ms as f64,
+                    60.0,
+                    900.0,
+                    20.0,
+                    0,
+                    |c, v| c.reveal_ms = v.round() as u64,
+                ),
+                number(
                     "隐藏延迟",
                     "鼠标离开后多久开始收起（毫秒）",
                     cfg.hide_delay_ms as f64,
@@ -314,6 +334,18 @@ pub fn run() -> glib::ExitCode {
                     "macOS 那种鼠标下方图标放大的效果",
                     cfg.magnify,
                     |c, v| c.magnify = v,
+                ),
+                toggle(
+                    "悬停提示",
+                    "鼠标停在图标上时显示应用名",
+                    cfg.tooltip,
+                    |c, v| c.tooltip = v,
+                ),
+                toggle(
+                    "右键菜单",
+                    "右键图标弹出「新窗口 / 退出」选项框",
+                    cfg.context_menu,
+                    |c, v| c.context_menu = v,
                 ),
                 number(
                     "放大峰值",

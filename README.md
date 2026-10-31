@@ -10,7 +10,7 @@
 - 运行指示点：有窗口的应用在图标下显示小圆点（跨工作区统计）
 - 左键：已运行 → 聚焦（多窗口时依次切换）；未运行 → 启动
 - 右键：应用菜单（新窗口 / 退出）
-- 自动隐藏：鼠标离开后滑下，光标贴底边滑回弹出
+- 自动隐藏：鼠标离开后滑下；触发带横贯整条屏幕边，光标碰到边缘任意位置就弹出
 
 ## 依赖
 
@@ -77,6 +77,9 @@ binds {
   "theme": "dark",
   "autohide": true,
   "hide_delay_ms": 650,
+  "hot_zone": 6,
+  "tooltip": true,
+  "context_menu": true,
   "magnify": true,
   "magnify_peak": 1.31
 }
@@ -91,6 +94,7 @@ binds {
 - `position`：`bottom` / `top` / `left` / `right`
 - `theme`：`dark` / `light`
 - `autohide` / `hide_delay_ms`：自动隐藏与收起延迟
+- `hot_zone`：屏幕边缘触发带的厚度（px），这条带横贯整条屏幕边，鼠标碰到任意位置都会唤出 dock
 - `magnify` / `magnify_peak`：悬停放大开关与峰值倍数（峰值上限 1.30）
 
 想让图标更小但 dock 不变，只调 `icon_size`；想让 dock 更紧凑，调 `slot` 和 `spacing`。

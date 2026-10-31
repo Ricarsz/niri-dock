@@ -36,6 +36,18 @@ struct Config {
     gap: i32,
     #[serde(default = "d_autohide")]
     autohide: bool,
+    /// 鼠标停在图标上时是否显示应用名提示
+    #[serde(default = "d_true")]
+    tooltip: bool,
+    /// 右键图标是否弹出应用菜单
+    #[serde(default = "d_true")]
+    context_menu: bool,
+    /// 触发区高度：鼠标进入屏幕底边这条窄带才弹出 dock
+    #[serde(default = "d_hot_zone")]
+    hot_zone: i32,
+    /// 弹出/收起动画时长（毫秒）
+    #[serde(default = "d_reveal_ms")]
+    reveal_ms: u64,
     #[serde(default = "d_delay")]
     hide_delay_ms: u64,
     /// 悬停放大（macOS 风，鼠标下的图标变大、邻居次之）
@@ -76,6 +88,8 @@ fn d_opacity() -> f64 { 0.92 }
 fn d_radius() -> i32 { 22 }
 
 fn d_true() -> bool { true }
+fn d_hot_zone() -> i32 { 6 }
+fn d_reveal_ms() -> u64 { 280 }
 fn d_peak() -> f64 { 1.5 }
 
 fn d_icon_size() -> i32 { 52 }
@@ -90,6 +104,10 @@ impl Default for Config {
             icon_size: d_icon_size(),
             gap: d_gap(),
             autohide: d_autohide(),
+            tooltip: d_true(),
+            context_menu: d_true(),
+            hot_zone: d_hot_zone(),
+            reveal_ms: d_reveal_ms(),
             hide_delay_ms: d_delay(),
             magnify: d_true(),
             magnify_peak: d_peak(),
@@ -284,15 +302,24 @@ fn strip_field_codes(exec: &str) -> String {
     out.trim().to_string()
 }
 
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME").map(PathBuf::from)
+}
+
 fn spawn_exec(exec: &str) {
     let cmd = strip_field_codes(exec);
     if cmd.is_empty() {
         return;
     }
-    let _ = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("setsid {cmd} >/dev/null 2>&1 &"))
-        .spawn();
+    // 关键：从 dock 继承来的 cwd 可能是任意目录（比如 dock 是从项目目录启动的），
+    // 启动的应用应当落在用户家目录，而不是 dock 的工作目录。
+    let home = home_dir();
+    let mut command = std::process::Command::new("sh");
+    command.arg("-c").arg(format!("setsid {cmd} >/dev/null 2>&1 &"));
+    if let Some(home) = home {
+        command.current_dir(home);
+    }
+    let _ = command.spawn();
 }
 
 // ───────────────────────── niri IPC ─────────────────────────
@@ -504,8 +531,19 @@ window, window.background {{
 }}
 
 .dock-item:active {{
+    background-color: transparent;
+}}
+
+.dock-glow {{
+    border-radius: 13px;
+    background-color: transparent;
+    transition: background-color 90ms ease;
+}}
+
+.dock-item:active .dock-glow {{
     background-color: {hover};
 }}
+
 
 .dot {{
     min-width: 4px;
@@ -529,20 +567,42 @@ window, window.background {{
 }}
 
 .dock-menu button {{
-    padding: 6px 12px;
+    padding: 8px 14px;
     border-radius: 10px;
     background-color: transparent;
     border: none;
+    transition: background-color 90ms ease;
+}}
+
+.dock-menu button:hover {{
+    background-color: rgba(255, 255, 255, 0.18);
+}}
+
+.dock-menu button:active {{
+    background-color: rgba(255, 255, 255, 0.26);
 }}
 "#
     ));
 
     s.push_str(".dock-strip { background-color: rgba(0, 0, 0, 0.004); }\n");
     // 放大档位：只改 transform（不进布局），过渡由上面的 CSS transition 负责
+    // 放大与弹跳都用 transform，同一个属性必须写进同一条规则里，
+    // 所以放大档位 × 弹跳帧位生成组合类（GTK 的 transform 只认按钮这类节点的类）。
+    let bounce = [(1usize, -14i32), (2, -2), (3, -8)];
     for i in 1..=MAG_STEPS {
         let scale = 1.0 + MAG_STEP * i as f64;
         s.push_str(&format!(
             ".dock-item.m{i} {{ transform: scale({scale:.3}); }}\n"
+        ));
+        for (n, y) in bounce {
+            s.push_str(&format!(
+                ".dock-item.m{i}.b{n} {{ transform: translate(0px, {y}px) scale({scale:.3}); }}\n"
+            ));
+        }
+    }
+    for (n, y) in bounce {
+        s.push_str(&format!(
+            ".dock-item.b{n} {{ transform: translate(0px, {y}px); }}\n"
         ));
     }
     s
@@ -553,6 +613,7 @@ struct Item {
     button: gtk::Button,
     image: gtk::Image,
     dot: gtk::Box,
+    slot: gtk::Overlay,
     level: std::cell::Cell<usize>,
 }
 
@@ -568,6 +629,10 @@ struct Ui {
     window: gtk::ApplicationWindow,
     shown: Rc<std::cell::Cell<bool>>,
     hide_at: RefCell<Option<Instant>>,
+    /// 右键菜单展开的数量：菜单开着时不能隐藏 dock，否则菜单跟着一起消失
+    menu_open: std::cell::Cell<usize>,
+    popovers: RefCell<Vec<gtk::Popover>>,
+    menu_close_at: RefCell<Option<Instant>>,
 }
 
 impl Ui {
@@ -604,6 +669,15 @@ impl Ui {
         }
     }
 
+    /// 关闭所有右键菜单（切换/隐藏 dock 时用）
+    fn close_menus(&self) {
+        for p in self.popovers.borrow().iter() {
+            if p.is_visible() {
+                p.popdown();
+            }
+        }
+    }
+
     fn show(&self) {
         if self.shown.get() {
             return;
@@ -615,9 +689,10 @@ impl Ui {
     }
 
     fn hide(&self) {
-        if !self.shown.get() {
+        if !self.shown.get() || self.menu_open.get() > 0 {
             return;
         }
+        self.close_menus();
         self.revealer.set_reveal_child(false);
         self.shown.set(false);
         // 收完之后把 revealer 整个藏掉：它自己会留 1px，那正是屏幕底那条细线
@@ -660,16 +735,22 @@ impl Ui {
         }
     }
 
-    /// 启动弹跳：几个离散帧位，靠 timeout 触发
+    /// 启动弹跳：只切 CSS 类（translateY），过渡交给合成层。
+    /// 不能用改 margin / pixel_size 的方式，那会触发布局与重绘，弹跳会一顿一顿。
     fn bounce(&self, idx: usize) {
-        let image = match self.items.borrow().get(idx) {
-            Some(item) => item.image.clone(),
+        let button = match self.items.borrow().get(idx) {
+            Some(item) => item.button.clone(),
             None => return,
         };
-        for (delay, lift) in [(60u64, 20i32), (170, 4), (290, 13), (410, 2), (540, 0)] {
-            let img = image.clone();
+        for (delay, class) in [(0u64, "b1"), (130, "b2"), (250, "b3"), (380, "")] {
+            let btn = button.clone();
             glib::timeout_add_local_once(Duration::from_millis(delay), move || {
-                img.set_margin_bottom(8 + lift);
+                for c in ["b1", "b2", "b3"] {
+                    btn.remove_css_class(c);
+                }
+                if !class.is_empty() {
+                    btn.add_css_class(class);
+                }
             });
         }
     }
@@ -735,7 +816,7 @@ fn main() -> glib::ExitCode {
     }
 
     let app = gtk::Application::builder()
-        .application_id("com.ricarse.niridock")
+        .application_id("io.github.ricarsz.niridock")
         .build();
 
     app.connect_startup(|_| {
@@ -751,8 +832,9 @@ fn main() -> glib::ExitCode {
         let mut cfg = load_config();
         apply_css(&cfg);
         cfg = load_config();
-        let win = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone());
-        let slot: Rc<RefCell<Option<gtk::ApplicationWindow>>> = Rc::new(RefCell::new(Some(win)));
+        let (win, hot) = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone());
+        let slot: Rc<RefCell<Option<(gtk::ApplicationWindow, Option<gtk::ApplicationWindow>)>>> =
+            Rc::new(RefCell::new(Some((win, hot))));
         let last = Rc::new(RefCell::new(config_mtime()));
 
         let app2 = app.clone();
@@ -765,8 +847,11 @@ fn main() -> glib::ExitCode {
                 apply_css(&cfg);
                 let fresh = build_ui(&app2, cfg, entries.clone(), windows.clone(), epoch.clone());
                 let old = slot2.borrow_mut().replace(fresh);
-                if let Some(o) = old {
+                if let Some((o, h)) = old {
                     o.close();
+                    if let Some(h) = h {
+                        h.close();
+                    }
                 }
             }
             glib::ControlFlow::Continue
@@ -787,7 +872,7 @@ fn build_ui(
     entries: Rc<HashMap<String, AppEntry>>,
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
-) -> gtk::ApplicationWindow {
+) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>) {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .decorated(false)
@@ -831,7 +916,7 @@ fn build_ui(
     };
     let revealer = gtk::Revealer::builder()
         .transition_type(transition)
-        .transition_duration(220)
+        .transition_duration(cfg.reveal_ms.clamp(60, 900) as u32)
         .reveal_child(true)
         .build();
 
@@ -847,9 +932,13 @@ fn build_ui(
         window: window.clone(),
         shown: Rc::new(std::cell::Cell::new(true)),
         hide_at: RefCell::new(None),
+        menu_open: std::cell::Cell::new(0),
+        popovers: RefCell::new(Vec::new()),
+        menu_close_at: RefCell::new(None),
     });
 
     let mut buttons: Vec<gtk::Button> = Vec::new();
+    let mut popovers: Vec<gtk::Popover> = Vec::new();
     // 放大是通过 transform 做的，不占布局；槽位只需要容纳常态图标 + 用户设定的间距
     // 槽位决定面板长宽，图标边长只影响图标本身 —— 所以改图标大小不会撑大 dock
     let across = cfg.slot.clamp(16, 160);
@@ -885,14 +974,31 @@ fn build_ui(
         let overlay = gtk::Overlay::new();
         overlay.set_size_request(slot_w, slot_h);
         overlay.set_overflow(gtk::Overflow::Visible);
-        overlay.set_child(Some(&image));
+        // 高亮画在这块比图标略大的底板上，而不是铺满整个槽位
+        let glow = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        glow.add_css_class("dock-glow");
+        let glow_pad = 6;
+        glow.set_size_request(cfg.icon_size + glow_pad, cfg.icon_size + glow_pad);
+        glow.set_halign(gtk::Align::Center);
+        glow.set_valign(gtk::Align::End);
+        glow.set_margin_bottom((item_bottom_margin(across, cfg.icon_size) - glow_pad / 2).max(0));
+        image.set_valign(gtk::Align::Center);
+        image.set_margin_bottom(0);
+        glow.append(&image);
+        overlay.set_child(Some(&glow));
         overlay.add_overlay(&dot);
 
         let button = gtk::Button::builder()
             .has_frame(false)
-            .tooltip_text(if entry.name.is_empty() { pin.as_str() } else { entry.name.as_str() })
             .child(&overlay)
             .build();
+        if cfg.tooltip {
+            button.set_tooltip_text(Some(if entry.name.is_empty() {
+                pin.as_str()
+            } else {
+                entry.name.as_str()
+            }));
+        }
         button.add_css_class("dock-item");
 
         let motion = gtk::EventControllerMotion::new();
@@ -951,8 +1057,25 @@ fn build_ui(
             });
         }
 
+        if !cfg.context_menu {
+            buttons.push(button.clone());
+            panel.append(&button);
+            ui.items.borrow_mut().push(Item {
+                entry,
+                button,
+                image,
+                dot,
+                slot: overlay.clone(),
+                level: std::cell::Cell::new(0),
+            });
+            continue;
+        }
+
         let pop = gtk::Popover::new();
         pop.add_css_class("dock-menu");
+        // 自动关闭依赖 GTK 的键盘/指针 grab，而 layer surface 上 grab 不可靠，
+        // 会出现「指针一进菜单就消失」，所以自己管生命周期
+        pop.set_autohide(false);
         {
             let bx = gtk::Box::new(gtk::Orientation::Vertical, 2);
             let title = gtk::Label::new(Some(if entry.name.is_empty() {
@@ -998,8 +1121,37 @@ fn build_ui(
                 });
             }
             bx.append(&b_quit);
+
+            // 指针离开菜单 500ms 后自动收起（layer surface 上没法靠 GTK grab 的「点外面关闭」）
+            {
+                let u = ui.clone();
+                let motion = gtk::EventControllerMotion::new();
+                motion.connect_enter(move |_, _, _| {
+                    *u.menu_close_at.borrow_mut() = None;
+                });
+                let u2 = ui.clone();
+                motion.connect_leave(move |_| {
+                    *u2.menu_close_at.borrow_mut() =
+                        Some(Instant::now() + Duration::from_millis(500));
+                });
+                bx.add_controller(motion);
+            }
             pop.set_child(Some(&bx));
             pop.set_parent(&button);
+        }
+        {
+            let u = ui.clone();
+            pop.connect_show(move |_| {
+                u.menu_open.set(u.menu_open.get() + 1);
+                *u.hide_at.borrow_mut() = None;
+            });
+            let u = ui.clone();
+            pop.connect_closed(move |_| {
+                u.menu_open.set(u.menu_open.get().saturating_sub(1));
+                if u.menu_open.get() == 0 && u.hover.get().is_none() {
+                    u.schedule_hide();
+                }
+            });
         }
         {
             let gesture = gtk::GestureClick::new();
@@ -1013,20 +1165,19 @@ fn build_ui(
         }
 
         buttons.push(button.clone());
+        popovers.push(pop.clone());
+        ui.popovers.borrow_mut().push(pop.clone());
         panel.append(&button);
         ui.items.borrow_mut().push(Item {
             entry,
             button: button.clone(),
             image,
             dot,
+            slot: overlay.clone(),
             level: std::cell::Cell::new(0),
         });
     }
 
-    // 放大是 CSS transform，会超出槽位；layer surface 和 Revealer 都会按尺寸裁切，
-    // 所以在面板四周留出「放大余量」，图标再大也不会被面板边吞掉。
-    // 面板/Revealer/图层表面都会按自身尺寸裁切，放大超出的部分必须先留出空间，
-    // 否则图标边缘会被 dock 面板「吞掉」。留多少按实际溢出量算，避免留一条无用的透明挡板。
     // 面板 / Revealer / 图层表面都会按自己的尺寸裁切，放大超出的部分要预先留出空间，
     // 否则图标会被 dock 面板「吞掉」一条边。
     // GTK 的 transform-origin 不生效，缩放以按钮中心为原点，所以向上最多长 格子 × (峰值-1)。
@@ -1079,25 +1230,13 @@ fn build_ui(
 
     revealer.set_child(Some(&wrap));
 
-    let strip = gtk::Box::new(
-        if horizontal { gtk::Orientation::Horizontal } else { gtk::Orientation::Vertical },
-        0,
-    );
-    strip.set_size_request(if horizontal { -1 } else { 6 }, if horizontal { 6 } else { -1 });
-    strip.add_css_class("dock-strip");
-
+    // 热区不在这个窗口里：它是一条横贯整个屏幕宽度的独立图层，
+    // 这样鼠标碰到屏幕底边任何一个位置都能把 dock 唤出来。
     let outer = gtk::Box::new(
         if horizontal { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal },
         0,
     );
-    // 热区条必须贴在屏幕那条边上
-    if matches!(position.as_str(), "top" | "left") {
-        outer.append(&strip);
-        outer.append(&revealer);
-    } else {
-        outer.append(&revealer);
-        outer.append(&strip);
-    }
+    outer.append(&revealer);
     window.set_child(Some(&outer));
 
     if ui.cfg.autohide {
@@ -1109,6 +1248,11 @@ fn build_ui(
         });
         let u2 = ui.clone();
         motion.connect_leave(move |_| {
+            // 指针移进右键菜单时也会触发 leave：此时不要收起 dock，也不要让图标缩回去，
+            // 否则菜单会跟着 dock 一起消失、看起来「点不中 + 卡顿」
+            if u2.menu_open.get() > 0 {
+                return;
+            }
             if u2.hover.get().is_some() {
                 u2.hover.set(None);
                 u2.apply_magnification();
@@ -1124,8 +1268,18 @@ fn build_ui(
                 None => false,
             };
             if due {
-                u3.hide();
+                if u3.menu_open.get() == 0 {
+                    u3.hide();
+                }
                 *u3.hide_at.borrow_mut() = None;
+            }
+            let close = match *u3.menu_close_at.borrow() {
+                Some(t) => Instant::now() >= t,
+                None => false,
+            };
+            if close {
+                *u3.menu_close_at.borrow_mut() = None;
+                u3.close_menus();
             }
             glib::ControlFlow::Continue
         });
@@ -1162,9 +1316,9 @@ fn build_ui(
     }
     if let Ok(v) = env::var("NIRI_DOCK_MENU") {
         if let Ok(n) = v.parse::<usize>() {
-            if let Some(btn) = buttons.get(n).cloned() {
+            if let Some(pop) = popovers.get(n).cloned() {
                 glib::timeout_add_local_once(Duration::from_millis(700), move || {
-                    btn.activate();
+                    pop.popup();
                 });
             }
         }
@@ -1172,5 +1326,80 @@ fn build_ui(
 
     ui.refresh_dots();
     window.present();
-    window
+
+    // 横贯整条屏幕边的热区：鼠标碰到屏幕底边任何位置都能唤出 dock
+    let hot = if ui.cfg.autohide {
+        Some(build_hot_window(app, &ui.cfg, &ui))
+    } else {
+        None
+    };
+
+    (window, hot)
+}
+
+fn build_hot_window(
+    app: &gtk::Application,
+    cfg: &Config,
+    ui: &Rc<Ui>,
+) -> gtk::ApplicationWindow {
+    let win = gtk::ApplicationWindow::builder()
+        .application(app)
+        .decorated(false)
+        .resizable(false)
+        .build();
+
+    let position = cfg.position.to_ascii_lowercase();
+    let horizontal = !matches!(position.as_str(), "left" | "right");
+    let hot = cfg.hot_zone.clamp(1, 32);
+
+    win.init_layer_shell();
+    win.set_namespace(Some("niri-dock-hot"));
+    win.set_layer(Layer::Top);
+    // 沿屏幕那条边铺满整条边
+    match position.as_str() {
+        "top" => {
+            win.set_anchor(Edge::Top, true);
+            win.set_anchor(Edge::Left, true);
+            win.set_anchor(Edge::Right, true);
+        }
+        "left" => {
+            win.set_anchor(Edge::Left, true);
+            win.set_anchor(Edge::Top, true);
+            win.set_anchor(Edge::Bottom, true);
+        }
+        "right" => {
+            win.set_anchor(Edge::Right, true);
+            win.set_anchor(Edge::Top, true);
+            win.set_anchor(Edge::Bottom, true);
+        }
+        _ => {
+            win.set_anchor(Edge::Bottom, true);
+            win.set_anchor(Edge::Left, true);
+            win.set_anchor(Edge::Right, true);
+        }
+    }
+    win.set_exclusive_zone(0);
+    win.set_keyboard_mode(KeyboardMode::None);
+
+    let strip = gtk::Box::new(
+        if horizontal { gtk::Orientation::Horizontal } else { gtk::Orientation::Vertical },
+        0,
+    );
+    strip.add_css_class("dock-strip");
+    strip.set_size_request(
+        if horizontal { -1 } else { hot },
+        if horizontal { hot } else { -1 },
+    );
+    win.set_child(Some(&strip));
+
+    let u = ui.clone();
+    let motion = gtk::EventControllerMotion::new();
+    motion.connect_enter(move |_, _, _| {
+        u.show();
+        *u.hide_at.borrow_mut() = None;
+    });
+    strip.add_controller(motion);
+
+    win.present();
+    win
 }

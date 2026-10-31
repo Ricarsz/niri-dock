@@ -1,0 +1,57 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rust gtk4 gtk4-layer-shell
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build pacman package
+        run: |
+          useradd -m builder
+          mkdir -p /work
+          cp -a "$GITHUB_WORKSPACE/." /work/
+          chown -R builder:builder /work
+          su builder -c 'cd /work && makepkg -f --noconfirm --nodeps'
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp /work/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+
+      - name: Build standalone binary
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          bsdtar -xOf "$GITHUB_WORKSPACE"/dist/*.pkg.tar.zst usr/bin/niri-dock \
+            > "$GITHUB_WORKSPACE/dist/niri-dock"
+          chmod 755 "$GITHUB_WORKSPACE/dist/niri-dock"
+          cd "$GITHUB_WORKSPACE/dist"
+          tar -czf "niri-dock-$version-x86_64.tar.gz" niri-dock
+          rm -f niri-dock
+          cp "$GITHUB_WORKSPACE/LICENSE" "$GITHUB_WORKSPACE/README.md" .
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.pkg.tar.zst
+            dist/*.tar.gz
+            dist/README.md
+            dist/LICENSE
+          generate_release_notes: true
+          fail_on_unmatched_files: true
