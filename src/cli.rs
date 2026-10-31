@@ -5,6 +5,7 @@
 //! （toggle/show/hide/reload/quit），不引入额外的守护进程或 socket 协议。
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -32,6 +33,22 @@ pub(crate) enum Cmd {
     Quit,
     Version,
     Help,
+}
+
+/// 把输出写到 stdout，管道被提前关闭时安静退出（避免 panic on broken pipe）
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        let mut out = std::io::stdout();
+        let _ = writeln!(out, $($arg)*);
+        let _ = out.flush();
+    }};
+}
+
+/// 让 `niri-dock status | head` 这类管道正常退出，而不是 panic on broken pipe
+pub(crate) fn restore_sigpipe() {
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
 }
 
 pub(crate) fn parse(args: &[String]) -> Cmd {
@@ -168,25 +185,25 @@ fn print_status() {
     let cfg_path = crate::config::config_path();
     match running_pid() {
         Some(pid) => {
-            println!("运行中 (pid {pid})");
+            say!("运行中 (pid {pid})");
             if activate_action("status") {
                 // dock 侧会把详细信息写进日志，这里只保证动作可用
             }
         }
-        None => println!("未运行"),
+        None => say!("未运行"),
     }
-    println!("版本    {}", env!("CARGO_PKG_VERSION"));
-    println!("配置    {}", cfg_path.display());
+    say!("版本    {}", env!("CARGO_PKG_VERSION"));
+    say!("配置    {}", cfg_path.display());
     let cfg = crate::config::load_config();
-    println!(
+    say!(
         "外观    icon {} / slot {} / spacing {} / {}, {}",
         cfg.icon_size, cfg.slot, cfg.spacing, cfg.position, cfg.theme
     );
-    println!("图标    {} 个", cfg.pins.len());
+    say!("图标    {} 个", cfg.pins.len());
 }
 
 pub(crate) fn print_help() {
-    println!(
+    say!(
         "niri-dock {} —— niri 的 macOS 风 dock\n\
          \n\
          用法: niri-dock [命令]\n\
@@ -220,7 +237,7 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
             Some(glib::ExitCode::SUCCESS)
         }
         Cmd::Version => {
-            println!("niri-dock {}", env!("CARGO_PKG_VERSION"));
+            say!("niri-dock {}", env!("CARGO_PKG_VERSION"));
             Some(glib::ExitCode::SUCCESS)
         }
         Cmd::Help => {
@@ -234,9 +251,9 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
         Cmd::Start => {
             if running_pid().is_some() {
                 let _ = activate_action("show");
-                println!("已在运行");
+                say!("已在运行");
             } else if spawn_detached() {
-                println!("已启动");
+                say!("已启动");
             } else {
                 eprintln!("启动失败");
                 return Some(glib::ExitCode::FAILURE);
@@ -245,16 +262,16 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
         }
         Cmd::Stop | Cmd::Quit => {
             if stop_running() {
-                println!("已停止");
+                say!("已停止");
             } else {
-                println!("未在运行");
+                say!("未在运行");
             }
             Some(glib::ExitCode::SUCCESS)
         }
         Cmd::Restart => {
             stop_running();
             if spawn_detached() {
-                println!("已重启");
+                say!("已重启");
                 Some(glib::ExitCode::SUCCESS)
             } else {
                 eprintln!("启动失败");

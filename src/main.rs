@@ -25,6 +25,8 @@ use dock::build_ui;
 use niri::{spawn_event_thread, Win};
 use style::apply_css;
 fn main() -> glib::ExitCode {
+    cli::restore_sigpipe();
+
     let args: Vec<String> = env::args().skip(1).collect();
     let cmd = cli::parse(&args);
     if let Some(code) = cli::dispatch(cmd) {
