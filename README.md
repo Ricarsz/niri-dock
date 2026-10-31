@@ -124,6 +124,8 @@ niri-dock edit
   `XDG_DATA_DIRS` 里的 `applications/`），列出还没加进来的应用，选中点「添加」即可
 - 列表已按 desktop id 去重（用户目录优先），并过滤掉 `NoDisplay=true`、
   `Hidden=true` 以及 `TryExec` 指向的程序不存在的条目
+- 每个应用名字下面都标着对应的 `.desktop` 文件名，下拉框里也是「名字 · 文件名」，
+  方便对不上号的时候确认到底是哪个条目
 
 改动只动 `config.json` 里的 `pins` 数组，其他配置项和未知字段保持不变。
 

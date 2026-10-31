@@ -76,8 +76,16 @@ fn apps_section() -> gtk::Box {
 
                 let label = gtk::Label::new(Some(&name));
                 label.set_xalign(0.0);
-                label.set_hexpand(true);
                 label.add_css_class("row-title");
+
+                let file = gtk::Label::new(Some(&format!("{pin}.desktop")));
+                file.set_xalign(0.0);
+                file.add_css_class("hint");
+
+                let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                text.set_hexpand(true);
+                text.append(&label);
+                text.append(&file);
 
                 let del = gtk::Button::with_label("移除");
                 del.set_valign(gtk::Align::Center);
@@ -98,7 +106,7 @@ fn apps_section() -> gtk::Box {
                 let line = gtk::Box::new(gtk::Orientation::Horizontal, 12);
                 line.add_css_class("row");
                 line.append(&image);
-                line.append(&label);
+                line.append(&text);
                 line.append(&del);
                 list2.append(&line);
             }
@@ -110,7 +118,11 @@ fn apps_section() -> gtk::Box {
             // 自动探测本机已安装的 .desktop：去重、隐藏的排除、按名字排序
             let available = crate::desktop::available_entries(&cfg.pins);
             *candidates.borrow_mut() = available.iter().map(|e| e.id.clone()).collect();
-            let names: Vec<&str> = available.iter().map(|e| e.name.as_str()).collect();
+            let names: Vec<String> = available
+                .iter()
+                .map(|e| format!("{}   ·   {}.desktop", e.name, e.id))
+                .collect();
+            let names: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
             let dropdown = gtk::DropDown::from_strings(&names);
             dropdown.set_hexpand(true);
             dropdown.set_enable_search(true);
