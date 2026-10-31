@@ -90,6 +90,39 @@ window, window.background {{
     background-color: {hover};
 }}
 
+/* 编辑模式：图标轻微晃动 + 删除角标 + 添加按钮 */
+.dock-item.editing {{
+    animation: dock-jiggle 320ms ease-in-out infinite;
+}}
+.dock-remove {{
+    min-width: 16px;
+    min-height: 16px;
+    padding: 0;
+    border-radius: 999px;
+    background-color: rgba(0, 0, 0, 0.72);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+    font-weight: 700;
+}}
+.dock-remove:hover {{
+    background-color: #ff3b30;
+    border-color: #ff3b30;
+}}
+.dock-add {{
+    color: {dot};
+    border-radius: 14px;
+    background-color: rgba(127, 127, 127, 0.20);
+}}
+.dock-add:hover {{
+    background-color: rgba(127, 127, 127, 0.34);
+}}
+@keyframes dock-jiggle {{
+    0% {{ transform: rotate(-1.2deg); }}
+    50% {{ transform: rotate(1.2deg); }}
+    100% {{ transform: rotate(-1.2deg); }}
+}}
+
 
 .dot {{
     min-width: 4px;

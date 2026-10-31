@@ -65,7 +65,9 @@ fn main() -> glib::ExitCode {
                 *last.borrow_mut() = now;
                 let cfg = load_config();
                 apply_css(&cfg);
-                let (win, hot, ui) = build_ui(&app2, cfg, entries.clone(), windows.clone(), epoch.clone());
+                // 重新扫一遍 desktop，编辑模式里新加的应用才能立刻拿到名字和图标
+                let entries = Rc::new(load_entries());
+                let (win, hot, ui) = build_ui(&app2, cfg, entries, windows.clone(), epoch.clone());
                 cli::register_actions(&app2, &ui);
                 let old = slot2.borrow_mut().replace((win, hot));
                 if let Some((o, h)) = old {

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::env;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -12,7 +13,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-use crate::config::{load_config, Config};
+use crate::config::{load_config, poke_config, save_pins, Config};
 use crate::desktop::*;
 use crate::niri::*;
 
@@ -48,9 +49,87 @@ pub(crate) fn item_bottom_margin(slot: i32, icon: i32) -> i32 {
     ((slot - icon) / 2).clamp(0, 24) + 2
 }
 
+/// 编辑模式：拖动排序、点 × 删除、点 + 添加 .desktop
+static EDITING: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn editing() -> bool {
+    EDITING.load(Ordering::Relaxed)
+}
+
+pub(crate) fn toggle_editing() -> bool {
+    let now = !editing();
+    EDITING.store(now, Ordering::Relaxed);
+    now
+}
+
+fn reorder_pins(from: usize, to: usize) {
+    let cfg = load_config();
+    let mut pins = cfg.pins;
+    if from >= pins.len() || to >= pins.len() || from == to {
+        return;
+    }
+    let moved = pins.remove(from);
+    pins.insert(to, moved);
+    save_pins(&pins);
+    poke_config();
+}
+
+fn remove_pin(pin: &str) {
+    let cfg = load_config();
+    let pins: Vec<String> = cfg.pins.into_iter().filter(|p| p != pin).collect();
+    save_pins(&pins);
+    poke_config();
+}
+
+/// 选中的 .desktop 不在标准目录里时，复制到 ~/.local/share/applications
+fn adopt_desktop_file(path: &std::path::Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?.to_string();
+    if !name.ends_with(".desktop") {
+        return None;
+    }
+    let id = name.trim_end_matches(".desktop").to_string();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    let local = home.join(".local/share/applications");
+    let _ = std::fs::create_dir_all(&local);
+    let dest = local.join(&name);
+    if path != dest {
+        let _ = std::fs::copy(path, &dest);
+        let _ = std::fs::set_permissions(
+            &dest,
+            std::os::unix::fs::PermissionsExt::from_mode(0o644),
+        );
+    }
+    let mut cfg = load_config();
+    if !cfg.pins.iter().any(|p| p == &id) {
+        cfg.pins.push(id.clone());
+        save_pins(&cfg.pins);
+        poke_config();
+    }
+    Some(id)
+}
+
+fn pick_desktop_file(parent: &gtk::Window) {
+    let dialog = gtk::FileDialog::new();
+    dialog.set_title("选择要添加的应用（.desktop）");
+    let filter = gtk::FileFilter::new();
+    filter.set_name(Some("应用入口 (*.desktop)"));
+    filter.add_pattern("*.desktop");
+    let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+    filters.append(&filter);
+    dialog.set_filters(Some(&filters));
+    dialog.set_default_filter(Some(&filter));
+    dialog.open(Some(parent), gtk::gio::Cancellable::NONE, move |res| {
+        if let Ok(file) = res {
+            if let Some(path) = file.path() {
+                adopt_desktop_file(&path);
+            }
+        }
+    });
+}
+
 pub(crate) fn build_ui(
     app: &gtk::Application,
-    cfg: Config,
+    mut cfg: Config,
     entries: Rc<HashMap<String, AppEntry>>,
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
@@ -61,6 +140,11 @@ pub(crate) fn build_ui(
         .resizable(false)
         .build();
 
+    let editing_mode = editing();
+    if editing_mode {
+        // 编辑时别自动隐藏，不然手一停 dock 就滑走了
+        cfg.autohide = false;
+    }
     let position = cfg.position.to_ascii_lowercase();
     let horizontal = !matches!(position.as_str(), "left" | "right");
 
@@ -183,6 +267,47 @@ pub(crate) fn build_ui(
         }
         button.add_css_class("dock-item");
 
+        if editing_mode {
+            button.add_css_class("editing");
+
+            let badge = gtk::Button::with_label("×");
+            badge.add_css_class("dock-remove");
+            badge.set_has_frame(false);
+            badge.set_halign(gtk::Align::Start);
+            badge.set_valign(gtk::Align::Start);
+            badge.set_margin_start(1);
+            badge.set_margin_top(1);
+            {
+                let pin_id = pin.clone();
+                badge.connect_clicked(move |_| remove_pin(&pin_id));
+            }
+            overlay.add_overlay(&badge);
+
+            // 拖动排序：拖自己，落到别的图标上就换位置
+            let src = gtk::DragSource::new();
+            src.set_actions(gtk::gdk::DragAction::MOVE);
+            {
+                let idx = i as u32;
+                src.connect_prepare(move |_, _, _| {
+                    Some(gtk::gdk::ContentProvider::for_value(&idx.to_value()))
+                });
+            }
+            button.add_controller(src);
+
+            let dst = gtk::DropTarget::new(u32::static_type(), gtk::gdk::DragAction::MOVE);
+            {
+                let target = i;
+                dst.connect_drop(move |_, value, _, _| {
+                    let Ok(from) = value.get::<u32>() else {
+                        return false;
+                    };
+                    reorder_pins(from as usize, target);
+                    true
+                });
+            }
+            button.add_controller(dst);
+        }
+
         let motion = gtk::EventControllerMotion::new();
         {
             let u = ui.clone();
@@ -239,7 +364,7 @@ pub(crate) fn build_ui(
             });
         }
 
-        if !cfg.context_menu {
+        if !cfg.context_menu || editing_mode {
             buttons.push(button.clone());
             panel.append(&button);
             ui.items.borrow_mut().push(Item {
@@ -510,6 +635,55 @@ pub(crate) fn build_ui(
     window.present();
 
     // 横贯整条屏幕边的热区：鼠标碰到屏幕底边任何位置都能唤出 dock
+    if editing_mode {
+        let add = gtk::Button::builder().has_frame(false).build();
+        add.add_css_class("dock-item");
+        add.add_css_class("dock-add");
+        let tile = cfg.icon_size.clamp(8, 256) + 6;
+        add.set_size_request(tile, tile);
+        add.set_halign(gtk::Align::Center);
+        add.set_valign(gtk::Align::Center);
+        let label = gtk::Label::new(Some("+"));
+        let px = cfg.icon_size.clamp(8, 256) / 2;
+        label.set_markup(&format!("<span font_size='{px}pt'>+</span>"));
+        add.set_child(Some(&label));
+        let overlay = gtk::Overlay::new();
+        overlay.set_size_request(slot_w.max(24), slot_h.max(24));
+        overlay.set_child(Some(&add));
+        let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        holder.append(&overlay);
+        {
+            let win = window.clone();
+            add.connect_clicked(move |_| pick_desktop_file(win.upcast_ref()));
+        }
+        // 放不进 panel 的话至少保证不被裁剪
+        panel.append(&holder);
+        buttons.push(add);
+
+        let done = gtk::Button::builder().has_frame(false).build();
+        done.add_css_class("dock-item");
+        done.add_css_class("dock-add");
+        done.set_size_request(tile, tile);
+        done.set_halign(gtk::Align::Center);
+        done.set_valign(gtk::Align::Center);
+        let done_label = gtk::Label::new(Some("✓"));
+        done_label.set_markup(&format!(
+            "<span font_size='{}pt'>✓</span>",
+            cfg.icon_size.clamp(8, 256) / 2
+        ));
+        done.set_child(Some(&done_label));
+        let done_overlay = gtk::Overlay::new();
+        done_overlay.set_size_request(slot_w.max(24), slot_h.max(24));
+        done_overlay.set_child(Some(&done));
+        let done_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        done_holder.append(&done_overlay);
+        done.connect_clicked(|_| {
+            crate::dock::toggle_editing();
+            crate::config::poke_config();
+        });
+        panel.append(&done_holder);
+    }
+
     let hot = if ui.cfg.autohide {
         Some(build_hot_window(app, &ui.cfg, &ui))
     } else {

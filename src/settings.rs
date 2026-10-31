@@ -360,6 +360,13 @@ pub fn run() -> glib::ExitCode {
             ],
         );
 
+        // 编辑模式入口：dock 进程负责真正进入编辑态
+        let edit_btn = gtk::Button::with_label("编辑 dock 图标");
+        edit_btn.set_tooltip_text(Some("进入后可以拖动图标排序、点 × 删除、点 + 添加 .desktop"));
+        edit_btn.connect_clicked(|_| {
+            let _ = crate::cli::activate_action("edit");
+        });
+
         let reset = gtk::Button::with_label("恢复默认外观");
         reset.set_halign(gtk::Align::Start);
         {
@@ -394,6 +401,8 @@ pub fn run() -> glib::ExitCode {
         body.append(&behavior);
 
         let footer_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        edit_btn.set_halign(gtk::Align::Start);
+        footer_box.append(&edit_btn);
         footer_box.append(&reset);
         footer_box.append(&footer);
         body.append(&footer_box);

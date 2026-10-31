@@ -126,6 +126,32 @@ pub(crate) fn save_config(cfg: &Config) {
     }
 }
 
+/// 只改 pins，其余字段（含我们不认识的键）原样保留
+pub(crate) fn save_pins(pins: &[String]) {
+    let dir = config_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let path = config_path();
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .filter(|v: &serde_json::Value| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+    root["pins"] = serde_json::json!(pins);
+    let tmp = path.with_extension("json.tmp");
+    if let Ok(text) = serde_json::to_string_pretty(&root) {
+        if std::fs::write(&tmp, format!("{text}\n")).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// 只碰 mtime，不动内容：让 dock 的 600ms 配置监听触发重建
+pub(crate) fn poke_config() {
+    if let Ok(f) = std::fs::File::options().read(true).open(config_path()) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
 pub(crate) fn load_config() -> Config {
     let dir = config_dir();
     let path = dir.join("config.json");

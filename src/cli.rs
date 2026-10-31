@@ -30,6 +30,7 @@ pub(crate) enum Cmd {
     Show,
     Hide,
     Reload,
+    Edit,
     Quit,
     Version,
     Help,
@@ -62,6 +63,7 @@ pub(crate) fn parse(args: &[String]) -> Cmd {
         Some("show") => Cmd::Show,
         Some("hide") => Cmd::Hide,
         Some("reload") => Cmd::Reload,
+        Some("edit") => Cmd::Edit,
         Some("quit") => Cmd::Quit,
         Some("settings") | Some("--settings") => Cmd::Settings,
         Some("dump") | Some("--dump") => Cmd::Dump,
@@ -117,7 +119,7 @@ fn app_path() -> String {
 }
 
 /// 通过 D-Bus 激活 dock 注册的 GAction；返回是否成功
-fn activate_action(name: &str) -> bool {
+pub(crate) fn activate_action(name: &str) -> bool {
     let Ok(conn) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
         return false;
     };
@@ -216,7 +218,8 @@ pub(crate) fn print_help() {
          toggle        显示 / 隐藏 dock\n\
          show          显示 dock\n\
          hide          隐藏 dock\n\
-         reload        重新读取配置并重建面板\n\
+         reload        重新读取配置并重建面板
+         edit          进入 / 退出图标编辑模式（拖动排序、加删图标）\n\
          quit          退出 dock\n\
          settings      打开设置窗口\n\
          dump          打印每个图标匹配到的窗口\n\
@@ -278,11 +281,12 @@ pub(crate) fn dispatch(cmd: Cmd) -> Option<glib::ExitCode> {
                 Some(glib::ExitCode::FAILURE)
             }
         }
-        Cmd::Toggle | Cmd::Show | Cmd::Hide | Cmd::Reload => {
+        Cmd::Toggle | Cmd::Show | Cmd::Hide | Cmd::Reload | Cmd::Edit => {
             let action = match cmd {
                 Cmd::Toggle => "toggle",
                 Cmd::Show => "show",
                 Cmd::Hide => "hide",
+                Cmd::Edit => "edit",
                 _ => "reload",
             };
             if running_pid().is_none() {
@@ -335,6 +339,22 @@ pub(crate) fn register_actions(app: &gtk::Application, ui: &std::rc::Rc<crate::d
             u.refresh_dots();
         }),
     );
+
+    // 图标编辑模式：开关后让 dock 重建面板，编辑控件在 build_ui 里按状态生成
+    {
+        let u = ui.clone();
+        add(
+            "edit",
+            Box::new(move || {
+                let now = crate::dock::toggle_editing();
+                crate::config::poke_config();
+                // 编辑模式下别自动隐藏，否则一松手就滑走了
+                if now {
+                    u.show();
+                }
+            }),
+        );
+    }
 }
 
 #[allow(dead_code)]

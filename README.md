@@ -15,6 +15,7 @@
 - 左键：已运行 → 聚焦（多窗口时依次切换）；未运行 → 启动
 - 右键：应用菜单（新窗口 / 退出）
 - 自动隐藏：鼠标离开后滑下；触发带横贯整条屏幕边，光标碰到边缘任意位置就弹出
+- 图标编辑模式：拖动排序、点 × 移除、点 + 添加任意 `.desktop`、点 ✓ 完成
 
 ## 依赖
 
@@ -88,6 +89,7 @@ niri-dock status       # 是否在跑 / 版本 / 配置路径 / 图标数
 niri-dock toggle       # 显示或隐藏
 niri-dock show|hide    # 显式显示 / 隐藏
 niri-dock reload       # 重新读配置并刷新
+niri-dock edit         # 进入 / 退出图标编辑模式
 niri-dock quit         # 退出
 niri-dock settings     # 打开设置窗口
 niri-dock dump         # 打印每个图标匹配到的窗口
@@ -95,6 +97,26 @@ niri-dock dump         # 打印每个图标匹配到的窗口
 
 进程管理靠 `$XDG_RUNTIME_DIR/niri-dock.pid`，显隐/重载/退出走 GApplication 导出的
 D-Bus action，所以不需要额外的守护进程或 socket。
+
+## 编辑 dock 上的图标
+
+设置窗口里点「编辑 dock 图标」，或者：
+
+```sh
+niri-dock edit
+```
+
+![编辑模式](docs/edit-mode.jpg)
+
+进入后 dock 不会自动隐藏，每个图标左上角出现 `×`，末尾出现 `+` 和 `✓`：
+
+- **拖动图标**：按住一个图标拖到另一个图标的位置即可换序，松开立即写回配置
+- **×**：把这个应用从 dock 上移除（只是移出列表，不卸载应用）
+- **+**：弹文件选择器，挑一个 `.desktop`；如果它不在标准目录里，会复制到
+  `~/.local/share/applications/` 再添加到列表
+- **✓**：退出编辑模式
+
+改动只动 `config.json` 里的 `pins` 数组，其他配置项和未知字段保持不变。
 
 ## 配置
 
