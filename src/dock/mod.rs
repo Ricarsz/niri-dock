@@ -6,3 +6,4 @@ mod ui;
 
 pub(crate) use build::{build_ui, dump_matches};
 pub(crate) use item::Item;
+pub(crate) use ui::Ui;

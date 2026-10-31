@@ -1,5 +1,6 @@
 //! niri-dock —— 给 niri 用的 macOS 风 dock（GTK4 + gtk4-layer-shell + niri IPC）
 
+mod cli;
 mod config;
 mod desktop;
 mod dock;
@@ -20,21 +21,18 @@ use gtk::prelude::*;
 
 use config::{config_mtime, load_config};
 use desktop::load_entries;
-use dock::{build_ui, dump_matches};
+use dock::build_ui;
 use niri::{spawn_event_thread, Win};
 use style::apply_css;
 fn main() -> glib::ExitCode {
-    if env::args().any(|a| a == "--settings") {
-        return settings::run();
-    }
-
-    if env::args().any(|a| a == "--dump") {
-        dump_matches();
-        return glib::ExitCode::SUCCESS;
+    let args: Vec<String> = env::args().skip(1).collect();
+    let cmd = cli::parse(&args);
+    if let Some(code) = cli::dispatch(cmd) {
+        return code;
     }
 
     let app = gtk::Application::builder()
-        .application_id("io.github.ricarsz.niridock")
+        .application_id(cli::APP_ID)
         .build();
 
     app.connect_startup(|_| {
@@ -50,7 +48,9 @@ fn main() -> glib::ExitCode {
         let mut cfg = load_config();
         apply_css(&cfg);
         cfg = load_config();
-        let (win, hot) = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone());
+        let (win, hot, ui) = build_ui(app, cfg, entries.clone(), windows.clone(), epoch.clone());
+        cli::register_actions(app, &ui);
+        cli::write_pid();
         let slot: Rc<RefCell<Option<(gtk::ApplicationWindow, Option<gtk::ApplicationWindow>)>>> =
             Rc::new(RefCell::new(Some((win, hot))));
         let last = Rc::new(RefCell::new(config_mtime()));
@@ -63,8 +63,9 @@ fn main() -> glib::ExitCode {
                 *last.borrow_mut() = now;
                 let cfg = load_config();
                 apply_css(&cfg);
-                let fresh = build_ui(&app2, cfg, entries.clone(), windows.clone(), epoch.clone());
-                let old = slot2.borrow_mut().replace(fresh);
+                let (win, hot, ui) = build_ui(&app2, cfg, entries.clone(), windows.clone(), epoch.clone());
+                cli::register_actions(&app2, &ui);
+                let old = slot2.borrow_mut().replace((win, hot));
                 if let Some((o, h)) = old {
                     o.close();
                     if let Some(h) = h {
@@ -75,6 +76,8 @@ fn main() -> glib::ExitCode {
             glib::ControlFlow::Continue
         });
     });
+
+    app.connect_shutdown(|_| cli::clear_pid());
 
     app.run()
 }

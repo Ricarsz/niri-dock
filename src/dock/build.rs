@@ -54,7 +54,7 @@ pub(crate) fn build_ui(
     entries: Rc<HashMap<String, AppEntry>>,
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
-) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>) {
+) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>, Rc<Ui>) {
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .decorated(false)
@@ -516,7 +516,7 @@ pub(crate) fn build_ui(
         None
     };
 
-    (window, hot)
+    (window, hot, ui)
 }
 
 pub(crate) fn build_hot_window(

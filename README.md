@@ -73,6 +73,25 @@ binds {
 }
 ```
 
+## 命令行
+
+```sh
+niri-dock              # 前台运行（已在运行则激活现有实例）
+niri-dock start        # 后台启动
+niri-dock stop         # 停止
+niri-dock restart      # 重启
+niri-dock status       # 是否在跑 / 版本 / 配置路径 / 图标数
+niri-dock toggle       # 显示或隐藏
+niri-dock show|hide    # 显式显示 / 隐藏
+niri-dock reload       # 重新读配置并刷新
+niri-dock quit         # 退出
+niri-dock settings     # 打开设置窗口
+niri-dock dump         # 打印每个图标匹配到的窗口
+```
+
+进程管理靠 `$XDG_RUNTIME_DIR/niri-dock.pid`，显隐/重载/退出走 GApplication 导出的
+D-Bus action，所以不需要额外的守护进程或 socket。
+
 ## 配置
 
 `~/.config/niri-dock/config.json`，首次运行自动生成：
