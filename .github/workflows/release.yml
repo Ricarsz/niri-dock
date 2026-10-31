@@ -44,16 +44,17 @@ jobs:
           chmod 755 /out/niri-dock
           tar -czf "/out/niri-dock-${version}-x86_64.tar.gz" -C /out niri-dock
           rm -f /out/niri-dock
-          cp /work/LICENSE /work/README.md /out/
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
+          # 只上传构建产物；LICENSE/README 由仓库本身承载，不再作为 release asset
+          assets=("/out/$(basename "$pkg")" "/out/niri-dock-${version}-x86_64.tar.gz")
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "niri-dock ${GITHUB_REF_NAME#v}" \
             --generate-notes \
-            /out/* \
-          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber /out/*
+            "${assets[@]}" \
+          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
