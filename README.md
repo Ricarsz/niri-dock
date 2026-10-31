@@ -18,7 +18,21 @@
 - `gtk4`、`gtk4-layer-shell`
 - 运行中的 niri 会话（需要 `NIRI_SOCKET`）
 
-## 构建与安装
+## 安装
+
+从 [Releases](https://github.com/Ricarsz/niri-dock/releases) 下载打好的 pacman 包并用 `paru` / `pacman` 安装：
+
+```sh
+paru -U niri-dock-<version>-1-x86_64.pkg.tar.zst
+```
+
+或者用仓库里的 `PKGBUILD` 自己构建安装：
+
+```sh
+makepkg -si
+```
+
+只想编个二进制、不装系统包：
 
 ```sh
 cargo build --release
@@ -80,8 +94,9 @@ binds {
   "hot_zone": 6,
   "tooltip": true,
   "context_menu": true,
+  "reveal_ms": 280,
   "magnify": true,
-  "magnify_peak": 1.31
+  "magnify_peak": 1.30
 }
 ```
 
@@ -93,7 +108,7 @@ binds {
 - `panel_radius` / `panel_opacity`：面板圆角与不透明度
 - `position`：`bottom` / `top` / `left` / `right`
 - `theme`：`dark` / `light`
-- `autohide` / `hide_delay_ms`：自动隐藏与收起延迟
+- `autohide` / `hide_delay_ms` / `reveal_ms`：自动隐藏、收起延迟、滑出动画时长（ms）
 - `hot_zone`：屏幕边缘触发带的厚度（px），这条带横贯整条屏幕边，鼠标碰到任意位置都会唤出 dock
 - `magnify` / `magnify_peak`：悬停放大开关与峰值倍数（峰值上限 1.30）
 

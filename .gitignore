@@ -2,3 +2,6 @@
 /screenshots
 *.bak
 *.swp
+/pkg
+/src
+*.pkg.tar.zst

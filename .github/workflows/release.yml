@@ -9,49 +9,48 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
 
     steps:
-      - name: Install build dependencies
+      - name: Install tooling
         run: |
           pacman -Syu --noconfirm --needed \
-            base-devel git rust gtk4 gtk4-layer-shell
+            base-devel git rust gtk4 gtk4-layer-shell github-cli
 
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Build pacman package
+      - name: Build package from tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -eu
           useradd -m builder
-          mkdir -p /work
-          cp -a "$GITHUB_WORKSPACE/." /work/
+          git clone --depth 1 --branch "$GITHUB_REF_NAME" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" /work
           chown -R builder:builder /work
           su builder -c 'cd /work && makepkg -f --noconfirm --nodeps'
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-          cp /work/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
 
-      - name: Build standalone binary
+      - name: Collect release assets
         run: |
           set -eu
           version="${GITHUB_REF_NAME#v}"
-          bsdtar -xOf "$GITHUB_WORKSPACE"/dist/*.pkg.tar.zst usr/bin/niri-dock \
-            > "$GITHUB_WORKSPACE/dist/niri-dock"
-          chmod 755 "$GITHUB_WORKSPACE/dist/niri-dock"
-          cd "$GITHUB_WORKSPACE/dist"
-          tar -czf "niri-dock-$version-x86_64.tar.gz" niri-dock
-          rm -f niri-dock
-          cp "$GITHUB_WORKSPACE/LICENSE" "$GITHUB_WORKSPACE/README.md" .
+          mkdir -p /out
+          cp /work/*.pkg.tar.zst /out/
+          bsdtar -xOf /work/*.pkg.tar.zst usr/bin/niri-dock > /out/niri-dock
+          chmod 755 /out/niri-dock
+          tar -czf "/out/niri-dock-${version}-x86_64.tar.gz" -C /out niri-dock
+          rm -f /out/niri-dock
+          cp /work/LICENSE /work/README.md /out/
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.pkg.tar.zst
-            dist/*.tar.gz
-            dist/README.md
-            dist/LICENSE
-          generate_release_notes: true
-          fail_on_unmatched_files: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "niri-dock ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            /out/* \
+          || gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber /out/*
