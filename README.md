@@ -1,1 +1,113 @@
 # niri-dock
+
+给 [niri](https://github.com/YaLTeR/niri) 用的 macOS 风格 dock。GTK4 + gtk4-layer-shell，窗口列表直接读 niri IPC（`NIRI_SOCKET`），不依赖 wlr-foreign-toplevel。
+
+## 特性
+
+- 贴边居中、圆角半透明面板（想要磨砂效果，可在 niri 里给 `niri-dock` 加 `layer-rule` 的 `background-effect { blur true }`）
+- 悬停放大：鼠标下的图标放大，左右邻居递减，macOS 同款；放大部分预留了图层空间，任何设置下都不会被面板边裁切
+- 启动弹跳：点按未运行的应用，图标上下弹几下
+- 运行指示点：有窗口的应用在图标下显示小圆点（跨工作区统计）
+- 左键：已运行 → 聚焦（多窗口时依次切换）；未运行 → 启动
+- 右键：应用菜单（新窗口 / 退出）
+- 自动隐藏：鼠标离开后滑下，光标贴底边滑回弹出
+
+## 依赖
+
+- `rust` / `cargo`
+- `gtk4`、`gtk4-layer-shell`
+- 运行中的 niri 会话（需要 `NIRI_SOCKET`）
+
+## 构建与安装
+
+```sh
+cargo build --release
+install -Dm755 target/release/niri-dock ~/.local/bin/niri-dock
+```
+
+自启（niri）：
+
+```kdl
+spawn-at-startup "niri-dock"
+```
+
+磨砂（niri，可选）：
+
+```kdl
+layer-rule {
+    match namespace="^niri-dock$"
+    background-effect {
+        blur true
+    }
+}
+```
+
+## 设置窗口
+
+```sh
+niri-dock --settings
+```
+
+外观 / 位置 / 行为三组设置，改动即时写入 `config.json`，dock 1 秒内自动重建面板，不用重启。
+「恢复默认外观」只重置外观与行为，保留 dock 上的应用列表。
+
+建议绑个快捷键（`~/.config/niri/config.kdl`）：
+
+```kdl
+binds {
+    Mod+Shift+D { spawn "niri-dock" "--settings"; }
+}
+```
+
+## 配置
+
+`~/.config/niri-dock/config.json`，首次运行自动生成：
+
+```json
+{
+  "pins": ["foot", "org.gnome.Nautilus", "google-chrome", "firefox-developer-edition"],
+  "icon_size": 52,
+  "slot": 64,
+  "spacing": 12,
+  "padding": 8,
+  "gap": 10,
+  "panel_radius": 22,
+  "panel_opacity": 0.92,
+  "position": "bottom",
+  "theme": "dark",
+  "autohide": true,
+  "hide_delay_ms": 650,
+  "magnify": true,
+  "magnify_peak": 1.31
+}
+```
+
+- `pins`：desktop 文件 id（不带 `.desktop`），按顺序显示
+- `icon_size`：图标本身的边长（px），只改图标，不改变 dock 长宽
+- `slot`：每个图标占的格子边长（px），**dock 的长宽由它决定**，图标在格子里居中
+- `spacing` / `padding`：格子之间的间距、面板内边距（px）
+- `gap`：面板离停靠屏幕边的距离
+- `panel_radius` / `panel_opacity`：面板圆角与不透明度
+- `position`：`bottom` / `top` / `left` / `right`
+- `theme`：`dark` / `light`
+- `autohide` / `hide_delay_ms`：自动隐藏与收起延迟
+- `magnify` / `magnify_peak`：悬停放大开关与峰值倍数（峰值上限 1.30）
+
+想让图标更小但 dock 不变，只调 `icon_size`；想让 dock 更紧凑，调 `slot` 和 `spacing`。
+
+改完保存即可，dock 会自己重读（不需要重启进程）。
+
+## 调试
+
+```sh
+niri-dock --dump                  # 打印每个 pin 匹配到的窗口
+NIRI_DOCK_HOVER=2 niri-dock       # 固定第 3 个图标为悬停态（截图用）
+NIRI_DOCK_BOUNCE=1 niri-dock      # 启动时触发一次弹跳
+NIRI_DOCK_MENU=2 niri-dock        # 直接弹出第 3 个图标的右键菜单
+```
+
+## 已知限制
+
+- 只跟踪窗口，不接 SNI 托盘：只在托盘里驻留、没有窗口的后台程序不会出现在 dock 上
+- 没有拖拽排序、没有废纸篓
+- niri 没有最小化概念，所以没有「最小化窗口」状态
