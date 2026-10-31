@@ -36,8 +36,11 @@ jobs:
           set -eu
           version="${GITHUB_REF_NAME#v}"
           mkdir -p /out
-          cp /work/*.pkg.tar.zst /out/
-          bsdtar -xOf /work/*.pkg.tar.zst usr/bin/niri-dock > /out/niri-dock
+          # makepkg 可能同时产出 -debug 包；只取主包，避免 bsdtar 把两个文件当成 archive+member
+          pkg="$(find /work -maxdepth 1 -name 'niri-dock-*.pkg.tar.zst' ! -name '*-debug-*' | head -n 1)"
+          test -n "$pkg"
+          cp "$pkg" /out/
+          bsdtar -xOf "$pkg" usr/bin/niri-dock > /out/niri-dock
           chmod 755 /out/niri-dock
           tar -czf "/out/niri-dock-${version}-x86_64.tar.gz" -C /out niri-dock
           rm -f /out/niri-dock

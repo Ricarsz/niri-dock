@@ -1,6 +1,6 @@
 # Maintainer: Ricarsz <ricarsz@users.noreply.github.com>
 pkgname=niri-dock
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="macOS-style dock for the niri Wayland compositor"
 arch=('x86_64')
@@ -8,6 +8,7 @@ url="https://github.com/Ricarsz/niri-dock"
 license=('MIT')
 depends=('gtk4' 'gtk4-layer-shell')
 makedepends=('cargo' 'rust')
+options=('!debug' 'strip')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
