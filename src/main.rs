@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod desktop;
 mod dock;
+mod icons;
 mod log;
 mod niri;
 mod settings;
@@ -157,15 +158,18 @@ fn main() -> glib::ExitCode {
             Ok(monitor) => {
                 let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
                 monitor.connect_changed(move |_, file, _, event| {
-                    let is_cfg = file
+                    let name = file
                         .basename()
-                        .map(|b| b.to_string_lossy() == "config.json")
-                        .unwrap_or(false);
-                    if !is_cfg {
+                        .map(|b| b.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    log_debug!("config", "监视事件 {event:?} {name}");
+                    // save_pins/save_config 是「写 .tmp 再 rename」，rename 只会在源文件上
+                    // 报 Renamed，所以 config.json.tmp 的动静也算配置变化
+                    if !name.starts_with("config.json") {
                         return;
                     }
                     use gtk::gio::FileMonitorEvent as E;
-                    if !matches!(event, E::Changed | E::Created | E::ChangesDoneHint | E::MovedIn) {
+                    if matches!(event, E::Deleted | E::MovedOut | E::Unmounted | E::PreUnmount) {
                         return;
                     }
                     if let Some(id) = pending.borrow_mut().take() {

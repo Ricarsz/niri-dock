@@ -120,6 +120,7 @@ niri-dock edit
 增删应用都在设置窗口的「应用」一栏：
 
 - 点「移除」把应用移出 dock
+- 加进来立刻生效：dock 监听配置文件变化，不用重启进程
 - 点「添加应用…」打开多选框：窗口会自动扫描本机的 `.desktop`（`XDG_DATA_HOME`、
   `XDG_DATA_DIRS` 里的 `applications/`），列出还没加进来的应用，可以搜索、
   一次勾选多个，点「添加选中」一起加
@@ -190,6 +191,13 @@ NIRI_DOCK_ADD_DIALOG=1 niri-dock --settings   # 直接打开「添加应用」�
 `niri-dock start` 会把 dock 自己的 stderr 重定向进这个文件，所以后台运行时的
 报错不会丢。日志里能看到：启动与配置、niri 连接与窗口事件、面板显示/隐藏、
 重建原因、编辑模式的排序/增删。
+
+## 图标
+
+图标先按 `.desktop` 里 `Icon=` 的名字走图标主题；名字找不到（或者 `Icon=` 直接写的是
+绝对路径，比如微信的 `Icon=/usr/share/icons/hicolor/512x512/apps/wechat.png`）时，
+会再去 `~/.local/share/icons`、`/usr/share/icons`、`/usr/share/pixmaps`、`/opt`
+这些目录里按文件名兜底找一张，避免显示成“图片缺失”的禁止符号。
 
 ## 已知限制
 

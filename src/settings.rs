@@ -72,7 +72,7 @@ fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
                 let image = if icon.is_empty() {
                     gtk::Image::from_icon_name("application-x-executable")
                 } else {
-                    gtk::Image::from_icon_name(&icon)
+                    crate::icons::image_for(&icon, 24)
                 };
                 image.set_pixel_size(22);
 

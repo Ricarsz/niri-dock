@@ -195,7 +195,7 @@ pub(crate) fn build_ui(
         } else {
             entry.icon.clone()
         };
-        let image = gtk::Image::from_icon_name(&icon_name);
+        let image = crate::icons::image_for(&icon_name, cfg.icon_size.clamp(8, 256));
         image.set_pixel_size(cfg.icon_size.clamp(8, 256));
         image.set_overflow(gtk::Overflow::Visible);
         image.set_valign(gtk::Align::End);
