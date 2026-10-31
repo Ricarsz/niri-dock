@@ -2,6 +2,10 @@
 
 给 [niri](https://github.com/YaLTeR/niri) 用的 macOS 风格 dock。GTK4 + gtk4-layer-shell，窗口列表直接读 niri IPC（`NIRI_SOCKET`），不依赖 wlr-foreign-toplevel。
 
+![niri-dock 截图](docs/screenshot.jpg)
+
+![dock 近景](docs/dock-closeup.jpg)
+
 ## 特性
 
 - 贴边居中、圆角半透明面板（想要磨砂效果，可在 niri 里给 `niri-dock` 加 `layer-rule` 的 `background-effect { blur true }`）
