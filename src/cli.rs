@@ -150,22 +150,12 @@ fn spawn_detached() -> bool {
         return false;
     };
     let home = env::var_os("HOME").map(PathBuf::from);
-    // 把 dock 自己的 stderr 落到日志文件，`niri-dock logs` 才能看到
-    let log_path = crate::log::log_file();
-    if let Some(parent) = log_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .map_err(|err| crate::log_warn!("logs", "打不开日志文件 {}: {err}", log_path.display()))
-        .ok();
+    // dock 自己会把日志写进 `~/.local/state/niri-dock/dock.log`，这里不用再重定向
     let mut cmd = Command::new("setsid");
     cmd.arg(exe)
         .stdin(Stdio::null())
-        .stdout(log.as_ref().map(|f| f.try_clone().ok()).flatten().map(Stdio::from).unwrap_or_else(Stdio::null))
-        .stderr(log.map(Stdio::from).unwrap_or_else(Stdio::null));
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     if let Some(home) = home {
         cmd.current_dir(home);
     }

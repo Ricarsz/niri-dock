@@ -84,6 +84,10 @@ impl Ui {
 
     pub(crate) fn show(&self) {
         if self.shown.get() {
+            // 状态要是和实际显示不符（比如动画被打断），这里也要把它掰回来
+            log_debug!("dock", "show：已经是显示状态，强制补一次 reveal");
+            self.revealer.set_visible(true);
+            self.revealer.set_reveal_child(true);
             return;
         }
         log_debug!("dock", "显示面板");

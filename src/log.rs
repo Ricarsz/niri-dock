@@ -66,11 +66,36 @@ pub(crate) fn stamp() -> String {
         .unwrap_or_default()
 }
 
+fn sink() -> Option<&'static std::sync::Mutex<std::fs::File>> {
+    static SINK: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
+    SINK.get_or_init(|| {
+        let path = log_file();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()
+            .map(std::sync::Mutex::new)
+    })
+    .as_ref()
+}
+
 pub(crate) fn log(level: Level, tag: &str, msg: &str) {
     if level > self::level() {
         return;
     }
-    eprintln!("{} {:<5} {:<8} {}", stamp(), level.label(), tag, msg);
+    let line = format!("{} {:<5} {:<8} {}", stamp(), level.label(), tag, msg);
+    eprintln!("{line}");
+    // 同时落盘：无论 dock 是被 systemd、niri 还是命令行拉起来的，日志都在
+    if let Some(sink) = sink() {
+        use std::io::Write;
+        if let Ok(mut file) = sink.lock() {
+            let _ = writeln!(file, "{line}");
+        }
+    }
 }
 
 #[macro_export]

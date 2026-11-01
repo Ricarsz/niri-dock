@@ -92,6 +92,7 @@ pub(crate) fn build_ui(
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
     reuse_window: Option<gtk::ApplicationWindow>,
+    reuse_hot: Option<gtk::ApplicationWindow>,
     rebuild: &crate::cli::Rebuild,
 ) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>, Rc<Ui>) {
     // 重建时复用已有窗口：只换内容，不销毁/重建 surface
@@ -610,7 +611,7 @@ pub(crate) fn build_ui(
     }
 
     let hot = if ui.cfg.autohide {
-        Some(build_hot_window(app, &ui.cfg, &ui))
+        Some(build_hot_window(app, &ui.cfg, &ui, reuse_hot))
     } else {
         None
     };
@@ -622,7 +623,32 @@ pub(crate) fn build_hot_window(
     app: &gtk::Application,
     cfg: &Config,
     ui: &Rc<Ui>,
+    reuse: Option<gtk::ApplicationWindow>,
 ) -> gtk::ApplicationWindow {
+    // 复用旧窗口：重建时换掉内容会让它收不到 pointer enter（指针正好贴着底边时
+    // 新 surface 起来也不会有 enter 事件），表现为「划到底部不弹出」。
+    if let Some(win) = reuse {
+        log_debug!("build", "复用热区窗口（hot_zone={}）", cfg.hot_zone);
+        let strip = gtk::Box::new(
+            if !matches!(cfg.position.to_ascii_lowercase().as_str(), "left" | "right") {
+                gtk::Orientation::Horizontal
+            } else {
+                gtk::Orientation::Vertical
+            },
+            0,
+        );
+        strip.add_css_class("dock-strip");
+        let hot = cfg.hot_zone.clamp(1, 32);
+        let horizontal = !matches!(cfg.position.to_ascii_lowercase().as_str(), "left" | "right");
+        strip.set_size_request(
+            if horizontal { -1 } else { hot },
+            if horizontal { hot } else { -1 },
+        );
+        wire_hot_strip(&strip, ui);
+        win.set_child(Some(&strip));
+        return win;
+    }
+
     let win = gtk::ApplicationWindow::builder()
         .application(app)
         .decorated(false)
@@ -673,16 +699,27 @@ pub(crate) fn build_hot_window(
     );
     win.set_child(Some(&strip));
 
+    log_debug!("build", "新建热区窗口（hot_zone={}）", hot);
+    wire_hot_strip(&strip, ui);
+    win.present();
+    win
+}
+
+/// 底边那条热区的指针处理（enter 用来唤出，leave 只记日志）
+fn wire_hot_strip(strip: &gtk::Box, ui: &Rc<Ui>) {
     let u = ui.clone();
     let motion = gtk::EventControllerMotion::new();
-    motion.connect_enter(move |_, _, _| {
+    motion.connect_enter(move |_, x, y| {
+        log_debug!("hot", "指针进入热区 ({x:.0},{y:.0})");
         u.show();
         u.cancel_hide();
     });
+    let u2 = ui.clone();
+    motion.connect_leave(move |_| {
+        log_debug!("hot", "指针离开热区");
+        u2.schedule_hide();
+    });
     strip.add_controller(motion);
-
-    win.present();
-    win
 }
 
 #[cfg(test)]

@@ -82,12 +82,14 @@ fn main() -> glib::ExitCode {
         apply_css(&cfg);
         cfg = load_config();
         let trigger: cli::Rebuild = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let initial_pos = cfg.position.to_ascii_lowercase();
         let (win, hot, ui) = build_ui(
             app,
             cfg,
             entries.clone(),
             windows.clone(),
             epoch.clone(),
+            None,
             None,
             &trigger,
         );
@@ -103,7 +105,8 @@ fn main() -> glib::ExitCode {
             let current2 = current.clone();
             let windows2 = windows.clone();
             let epoch2 = epoch.clone();
-            let last_pos: Rc<RefCell<String>> = Rc::new(RefCell::new(String::new()));
+            let last_pos: Rc<RefCell<String>> =
+                Rc::new(RefCell::new(initial_pos.clone()));
             let trigger2 = trigger.clone();
             Rc::new(move || {
                 log_debug!("rebuild", "开始重建面板");
@@ -123,6 +126,7 @@ fn main() -> glib::ExitCode {
                     .map(|u| u.shown.get())
                     .unwrap_or(false);
                 let reuse = if same_pos { old_win.clone() } else { None };
+                let reuse_hot = if same_pos { old_hot.clone() } else { None };
                 *last_pos.borrow_mut() = cfg.position.to_ascii_lowercase();
                 let (win, hot, ui) = build_ui(
                     &app2,
@@ -131,6 +135,7 @@ fn main() -> glib::ExitCode {
                     windows2.clone(),
                     epoch2.clone(),
                     reuse.clone(),
+                    reuse_hot.clone(),
                     &trigger2,
                 );
                 if was_shown {
@@ -145,7 +150,9 @@ fn main() -> glib::ExitCode {
                     }
                 }
                 if let Some(h) = old_hot {
-                    h.close();
+                    if Some(&h) != reuse_hot.as_ref() {
+                        h.close();
+                    }
                 }
             })
         };
