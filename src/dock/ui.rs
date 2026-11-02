@@ -113,22 +113,27 @@ impl Ui {
         self.close_menus();
         self.revealer.set_reveal_child(false);
         self.shown.set(false);
-        // 动画走完后把 revealer 整个藏掉，并把窗口钳到折叠尺寸：窗口从不 unmap
+        // 动画走完后把 revealer 整个藏掉，再把窗口钳到折叠尺寸。窗口从不 unmap
         // （GTK4 layer-shell 下 unmap 后 set_visible(true) 不会重新 map，必须 present，
-        // 很脆），只剩一条 hot_zone 大小、全透明、什么都不画的带子当热区，
-        // 指针 enter 这条带子就展开（窗口控制器在 build 里挂着）。窗口不再是 1px，
-        // 也就没有折叠后屏幕底边那条亮线。
+        // 很脆），折叠后它就是一条 hot_zone 大小、透明的带子当热区，指针 enter 这条
+        // 带子就展开（窗口控制器在 build 里挂着）。
         let revealer = self.revealer.clone();
         let window = self.window.clone();
         let shown = self.shown.clone();
         let (cw, ch) = self.collapsed_size_request();
+        // 沿屏幕那条轴要显式给尺寸：留 -1 时 GDK 会按 0 算，gtk4-layer-shell 只能
+        // 退回 200px 默认值（还会打 gdk_wayland_toplevel_compute_size 的 critical）。
+        let cw = if cw < 0 { self.window.width().max(1) } else { cw };
+        let ch = if ch < 0 { self.window.height().max(1) } else { ch };
         let settle = self.cfg.reveal_ms.clamp(60, 900) + 20;
         glib::timeout_add_local_once(Duration::from_millis(settle), move || {
-            if !shown.get() {
-                revealer.set_visible(false);
-                window.set_size_request(cw, ch);
-                window.queue_draw();
+            if shown.get() {
+                return;
             }
+            // revealer 必须藏掉：窗口非 resizable，尺寸跟着内容走，留着它会把
+            // 面板的最小高度撑回来，缩不到 hot_zone。
+            revealer.set_visible(false);
+            window.set_size_request(cw, ch);
         });
     }
 

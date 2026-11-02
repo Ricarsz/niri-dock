@@ -507,6 +507,21 @@ pub(crate) fn build_ui(
         0,
     );
     outer.append(&revealer);
+
+    // 一层始终存在、alpha=0 的底色。GTK 只有在真的产生绘制命令时才会给窗口
+    // 提交新 buffer；折叠时整棵树都隐藏（没有像素可画），它就不提交，于是
+    // gtk4-layer-shell 不会把 layer surface 缩到 hot_zone，合成器继续显示
+    // 收起动画最后一帧（30px 左右），屏幕底部就残留一条面板边缘的白线。
+    // 这层透明底让窗口总有内容可画，折叠后 surface 能正常同步到 hot_zone。
+    let backdrop = gtk::DrawingArea::new();
+    backdrop.set_hexpand(true);
+    backdrop.set_vexpand(true);
+    backdrop.set_draw_func(|_, cr, _w, _h| {
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+        let _ = cr.paint();
+    });
+
+    outer.prepend(&backdrop);
     window.set_child(Some(&outer));
 
     if ui.cfg.autohide {
