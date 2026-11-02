@@ -522,6 +522,15 @@ pub(crate) fn build_ui(
     });
 
     outer.prepend(&backdrop);
+    // 给窗口内容一条下限：收起动画会把 revealer 的 natural 缩到 0，窗口跟着掉到
+    // 0 尺寸时 gtk4-layer-shell 会退回它 200px 的默认尺寸，热区瞬间变成屏幕底部
+    // 200px 高的一条带——指针停在屏幕底往上一点的地方就会 enter→show→hide 循环。
+    let hot = cfg.hot_zone.clamp(1, 32);
+    if horizontal {
+        outer.set_size_request(-1, hot);
+    } else {
+        outer.set_size_request(hot, -1);
+    }
     window.set_child(Some(&outer));
 
     if ui.cfg.autohide {
