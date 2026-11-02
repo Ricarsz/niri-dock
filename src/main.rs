@@ -83,21 +83,20 @@ fn main() -> glib::ExitCode {
         cfg = load_config();
         let trigger: cli::Rebuild = std::rc::Rc::new(std::cell::RefCell::new(None));
         let initial_pos = cfg.position.to_ascii_lowercase();
-        let (win, hot, ui) = build_ui(
+        let (win, ui) = build_ui(
             app,
             cfg,
             entries.clone(),
             windows.clone(),
             epoch.clone(),
             None,
-            None,
             &trigger,
         );
         *current.borrow_mut() = Some(ui.clone());
         cli::register_actions(app, &ui, &trigger);
         cli::write_pid();
-        let slot: Rc<RefCell<Option<(gtk::ApplicationWindow, Option<gtk::ApplicationWindow>)>>> =
-            Rc::new(RefCell::new(Some((win, hot))));
+        let slot: Rc<RefCell<Option<gtk::ApplicationWindow>>> =
+            Rc::new(RefCell::new(Some(win)));
         // 配置变化：用 inotify 的目录监视替代 600ms 轮询；事件再做一个 120ms 防抖。
         let rebuild = {
             let app2 = app.clone();
@@ -116,26 +115,21 @@ fn main() -> glib::ExitCode {
                 let entries = Rc::new(load_entries());
                 // 位置没变就复用窗口（不重建 surface），变了才新建
                 let same_pos = *last_pos.borrow() == cfg.position.to_ascii_lowercase();
-                let (old_win, old_hot) = match &*slot2.borrow() {
-                    Some((w, h)) => (Some(w.clone()), h.clone()),
-                    None => (None, None),
-                };
+                let old_win = slot2.borrow().clone();
                 let was_shown = current2
                     .borrow()
                     .as_ref()
                     .map(|u| u.shown.get())
                     .unwrap_or(false);
                 let reuse = if same_pos { old_win.clone() } else { None };
-                let reuse_hot = if same_pos { old_hot.clone() } else { None };
                 *last_pos.borrow_mut() = cfg.position.to_ascii_lowercase();
-                let (win, hot, ui) = build_ui(
+                let (win, ui) = build_ui(
                     &app2,
                     cfg,
                     entries,
                     windows2.clone(),
                     epoch2.clone(),
                     reuse.clone(),
-                    reuse_hot.clone(),
                     &trigger2,
                 );
                 if was_shown {
@@ -143,15 +137,10 @@ fn main() -> glib::ExitCode {
                 }
                 *current2.borrow_mut() = Some(ui.clone());
                 cli::register_actions(&app2, &ui, &trigger2);
-                *slot2.borrow_mut() = Some((win, hot));
+                *slot2.borrow_mut() = Some(win);
                 if let Some(o) = old_win {
                     if Some(&o) != reuse.as_ref() {
                         o.close();
-                    }
-                }
-                if let Some(h) = old_hot {
-                    if Some(&h) != reuse_hot.as_ref() {
-                        h.close();
                     }
                 }
             })

@@ -32,6 +32,8 @@ pub(crate) struct Ui {
     pub(crate) shown: Rc<std::cell::Cell<bool>>,
     /// 自动隐藏的一次性定时器（只在需要时存在，空闲时不开任何轮询）
     pub(crate) hide_src: RefCell<Option<glib::SourceId>>,
+    /// 窗口上的运动控制器：定时隐藏到点时用它复查指针是否还在窗口内
+    pub(crate) window_motion: RefCell<Option<gtk::EventControllerMotion>>,
     /// 右键菜单展开的数量：菜单开着时不能隐藏 dock，否则菜单跟着一起消失
     pub(crate) menu_open: std::cell::Cell<usize>,
     pub(crate) popovers: RefCell<Vec<gtk::Popover>>,
@@ -84,13 +86,18 @@ impl Ui {
 
     pub(crate) fn show(&self) {
         if self.shown.get() {
-            // 状态要是和实际显示不符（比如动画被打断），这里也要把它掰回来
+            // 状态要是和实际显示不符（比如动画被打断），这里也要把它掰回来；
+            // 同时取消待触发的隐藏：指针已经回到窗口里，定时器没必要再响
+            // （旧版只补 reveal 不取消，定时器到点照样把面板收走）
             log_debug!("dock", "show：已经是显示状态，强制补一次 reveal");
+            self.cancel_hide();
             self.revealer.set_visible(true);
             self.revealer.set_reveal_child(true);
             return;
         }
         log_debug!("dock", "显示面板");
+        // 先撤掉折叠态的尺寸钳制（见 hide），窗口才能随 revealer 长回全尺寸
+        self.window.set_size_request(-1, -1);
         self.revealer.set_visible(true);
         self.revealer.set_reveal_child(true);
         self.shown.set(true);
@@ -106,17 +113,42 @@ impl Ui {
         self.close_menus();
         self.revealer.set_reveal_child(false);
         self.shown.set(false);
-        // 收完之后把 revealer 整个藏掉：它自己会留 1px，那正是屏幕底那条细线
+        // 动画走完后把 revealer 整个藏掉，并把窗口钳到折叠尺寸：窗口从不 unmap
+        // （GTK4 layer-shell 下 unmap 后 set_visible(true) 不会重新 map，必须 present，
+        // 很脆），只剩一条 hot_zone 大小、全透明、什么都不画的带子当热区，
+        // 指针 enter 这条带子就展开（窗口控制器在 build 里挂着）。窗口不再是 1px，
+        // 也就没有折叠后屏幕底边那条亮线。
         let revealer = self.revealer.clone();
         let window = self.window.clone();
         let shown = self.shown.clone();
-        glib::timeout_add_local_once(Duration::from_millis(260), move || {
+        let (cw, ch) = self.collapsed_size_request();
+        let settle = self.cfg.reveal_ms.clamp(60, 900) + 20;
+        glib::timeout_add_local_once(Duration::from_millis(settle), move || {
             if !shown.get() {
                 revealer.set_visible(false);
-                // 窗口缩小后 GTK 只会重画脏区，最上面那 1px 会留着上一帧的面板边框
+                window.set_size_request(cw, ch);
                 window.queue_draw();
             }
         });
+    }
+
+    /// 折叠态的窗口尺寸请求：沿停靠边的方向只留 hot_zone，其余交给内容
+    fn collapsed_size_request(&self) -> (i32, i32) {
+        let hot = self.cfg.hot_zone.clamp(1, 32);
+        if matches!(self.cfg.position.to_ascii_lowercase().as_str(), "left" | "right") {
+            (hot, -1)
+        } else {
+            (-1, hot)
+        }
+    }
+
+    /// 指针是否还在窗口范围内（含子控件，用运动控制器的实时状态，
+    /// 不受 enter/leave 事件投递顺序的影响）
+    fn pointer_in_window(&self) -> bool {
+        self.window_motion
+            .borrow()
+            .as_ref()
+            .is_some_and(|m| m.contains_pointer())
     }
 
     pub(crate) fn cancel_hide(&self) {
@@ -135,6 +167,13 @@ impl Ui {
         let delay = self.cfg.hide_delay_ms;
         let id = glib::timeout_add_local_once(Duration::from_millis(delay), move || {
             *me.hide_src.borrow_mut() = None;
+            // 到点复查：指针其实还在窗口里就不收。leave 的来源不止「指针真的走了」：
+            // 展开/收起改变窗口尺寸时合成器会补发 crossing，菜单关闭时也会排一次隐藏，
+            // 而指针可能还停在面板的空白处。真的离开时 leave 会另行再排一次隐藏。
+            if me.pointer_in_window() || me.menu_open.get() > 0 {
+                log_debug!("dock", "定时隐藏取消：指针还在窗口内或菜单开着");
+                return;
+            }
             me.hide();
         });
         *self.hide_src.borrow_mut() = Some(id);

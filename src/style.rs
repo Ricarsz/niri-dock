@@ -163,7 +163,6 @@ window, window.background {{
 "#
     ));
 
-    s.push_str(".dock-strip { background-color: rgba(0, 0, 0, 0.004); }\n");
     // 放大档位：只改 transform（不进布局），过渡由上面的 CSS transition 负责
     // 放大与弹跳都用 transform，同一个属性必须写进同一条规则里，
     // 所以放大档位 × 弹跳帧位生成组合类（GTK 的 transform 只认按钮这类节点的类）。

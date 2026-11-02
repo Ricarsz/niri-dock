@@ -1,4 +1,5 @@
-//! 构建 dock 面板与横贯屏幕边的热区窗口。
+//! 构建 dock 面板。只有一个图层窗口：折叠时它缩成 hot_zone 大小的透明带，
+//! 这条带本身就是热区，不再另开一个与主窗口重叠的热区 surface。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -92,9 +93,8 @@ pub(crate) fn build_ui(
     windows: Arc<Mutex<HashMap<i64, Win>>>,
     epoch: Arc<AtomicU64>,
     reuse_window: Option<gtk::ApplicationWindow>,
-    reuse_hot: Option<gtk::ApplicationWindow>,
     rebuild: &crate::cli::Rebuild,
-) -> (gtk::ApplicationWindow, Option<gtk::ApplicationWindow>, Rc<Ui>) {
+) -> (gtk::ApplicationWindow, Rc<Ui>) {
     // 重建时复用已有窗口：只换内容，不销毁/重建 surface
     // （每建一次窗口要多花 ~1.4MB 显存/纹理，而且会闪一下）
     let reused = reuse_window.is_some();
@@ -170,6 +170,7 @@ pub(crate) fn build_ui(
         window: window.clone(),
         shown: Rc::new(std::cell::Cell::new(true)),
         hide_src: RefCell::new(None),
+        window_motion: RefCell::new(None),
         menu_open: std::cell::Cell::new(0),
         popovers: RefCell::new(Vec::new()),
         menu_src: RefCell::new(None),
@@ -498,8 +499,9 @@ pub(crate) fn build_ui(
 
     revealer.set_child(Some(&wrap));
 
-    // 热区不在这个窗口里：它是一条横贯整个屏幕宽度的独立图层，
-    // 这样鼠标碰到屏幕底边任何一个位置都能把 dock 唤出来。
+    // 热区就是这个窗口自己：折叠时窗口被钳到 hot_zone 大小（见 Ui::hide 的尺寸请求），
+    // 内容全透明、什么都不画，指针碰到这条带就展开。旧版另开一条横贯屏幕的热区窗口，
+    // 两个 surface 在屏幕边重叠、互相抢指针的 enter/leave，会自激抖动，所以删掉。
     let outer = gtk::Box::new(
         if horizontal { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal },
         0,
@@ -510,6 +512,8 @@ pub(crate) fn build_ui(
     if ui.cfg.autohide {
         let u = ui.clone();
         let motion = gtk::EventControllerMotion::new();
+        // 留一份给 Ui：定时隐藏到点时用它的 contains-pointer 复查指针位置
+        *ui.window_motion.borrow_mut() = Some(motion.clone());
         motion.connect_enter(move |_, _, _| {
             u.show();
             u.cancel_hide();
@@ -610,116 +614,7 @@ pub(crate) fn build_ui(
         panel.append(&done_holder);
     }
 
-    let hot = if ui.cfg.autohide {
-        Some(build_hot_window(app, &ui.cfg, &ui, reuse_hot))
-    } else {
-        None
-    };
-
-    (window, hot, ui)
-}
-
-pub(crate) fn build_hot_window(
-    app: &gtk::Application,
-    cfg: &Config,
-    ui: &Rc<Ui>,
-    reuse: Option<gtk::ApplicationWindow>,
-) -> gtk::ApplicationWindow {
-    // 复用旧窗口：重建时换掉内容会让它收不到 pointer enter（指针正好贴着底边时
-    // 新 surface 起来也不会有 enter 事件），表现为「划到底部不弹出」。
-    if let Some(win) = reuse {
-        log_debug!("build", "复用热区窗口（hot_zone={}）", cfg.hot_zone);
-        let strip = gtk::Box::new(
-            if !matches!(cfg.position.to_ascii_lowercase().as_str(), "left" | "right") {
-                gtk::Orientation::Horizontal
-            } else {
-                gtk::Orientation::Vertical
-            },
-            0,
-        );
-        strip.add_css_class("dock-strip");
-        let hot = cfg.hot_zone.clamp(1, 32);
-        let horizontal = !matches!(cfg.position.to_ascii_lowercase().as_str(), "left" | "right");
-        strip.set_size_request(
-            if horizontal { -1 } else { hot },
-            if horizontal { hot } else { -1 },
-        );
-        wire_hot_strip(&strip, ui);
-        win.set_child(Some(&strip));
-        return win;
-    }
-
-    let win = gtk::ApplicationWindow::builder()
-        .application(app)
-        .decorated(false)
-        .resizable(false)
-        .build();
-
-    let position = cfg.position.to_ascii_lowercase();
-    let horizontal = !matches!(position.as_str(), "left" | "right");
-    let hot = cfg.hot_zone.clamp(1, 32);
-
-    win.init_layer_shell();
-    win.set_namespace(Some("niri-dock-hot"));
-    win.set_layer(Layer::Top);
-    // 沿屏幕那条边铺满整条边
-    match position.as_str() {
-        "top" => {
-            win.set_anchor(Edge::Top, true);
-            win.set_anchor(Edge::Left, true);
-            win.set_anchor(Edge::Right, true);
-        }
-        "left" => {
-            win.set_anchor(Edge::Left, true);
-            win.set_anchor(Edge::Top, true);
-            win.set_anchor(Edge::Bottom, true);
-        }
-        "right" => {
-            win.set_anchor(Edge::Right, true);
-            win.set_anchor(Edge::Top, true);
-            win.set_anchor(Edge::Bottom, true);
-        }
-        _ => {
-            win.set_anchor(Edge::Bottom, true);
-            win.set_anchor(Edge::Left, true);
-            win.set_anchor(Edge::Right, true);
-        }
-    }
-    win.set_exclusive_zone(0);
-    win.set_keyboard_mode(KeyboardMode::None);
-
-    let strip = gtk::Box::new(
-        if horizontal { gtk::Orientation::Horizontal } else { gtk::Orientation::Vertical },
-        0,
-    );
-    strip.add_css_class("dock-strip");
-    strip.set_size_request(
-        if horizontal { -1 } else { hot },
-        if horizontal { hot } else { -1 },
-    );
-    win.set_child(Some(&strip));
-
-    log_debug!("build", "新建热区窗口（hot_zone={}）", hot);
-    wire_hot_strip(&strip, ui);
-    win.present();
-    win
-}
-
-/// 底边那条热区的指针处理（enter 用来唤出，leave 只记日志）
-fn wire_hot_strip(strip: &gtk::Box, ui: &Rc<Ui>) {
-    let u = ui.clone();
-    let motion = gtk::EventControllerMotion::new();
-    motion.connect_enter(move |_, x, y| {
-        log_debug!("hot", "指针进入热区 ({x:.0},{y:.0})");
-        u.show();
-        u.cancel_hide();
-    });
-    let u2 = ui.clone();
-    motion.connect_leave(move |_| {
-        log_debug!("hot", "指针离开热区");
-        u2.schedule_hide();
-    });
-    strip.add_controller(motion);
+    (window, ui)
 }
 
 #[cfg(test)]
