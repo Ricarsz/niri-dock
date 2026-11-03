@@ -23,6 +23,10 @@ pub(crate) struct Config {
     /// 右键图标是否弹出应用菜单
     #[serde(default = "d_true")]
     pub(crate) context_menu: bool,
+    /// 允许"多开"的 pin：已经在跑的时候再点图标，就再起一个实例开新窗口
+    /// （终端这类单实例多窗口的应用用；普通应用不要放进来，否则会重复启动）
+    #[serde(default)]
+    pub(crate) multi_window: Vec<String>,
     /// 触发区高度：鼠标进入屏幕底边这条窄带才弹出 dock
     #[serde(default = "d_hot_zone")]
     pub(crate) hot_zone: i32,
@@ -87,6 +91,7 @@ impl Default for Config {
             autohide: d_autohide(),
             tooltip: d_true(),
             context_menu: d_true(),
+            multi_window: vec![],
             hot_zone: d_hot_zone(),
             reveal_ms: d_reveal_ms(),
             hide_delay_ms: d_delay(),
@@ -128,6 +133,15 @@ pub(crate) fn save_config(cfg: &Config) {
 
 /// 只改 pins，其余字段（含我们不认识的键）原样保留
 pub(crate) fn save_pins(pins: &[String]) {
+    save_list("pins", pins);
+}
+
+/// 只改 multi_window，其余字段原样保留
+pub(crate) fn save_multi_window(ids: &[String]) {
+    save_list("multi_window", ids);
+}
+
+fn save_list(key: &str, values: &[String]) {
     let dir = config_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = config_path();
@@ -136,7 +150,7 @@ pub(crate) fn save_pins(pins: &[String]) {
         .and_then(|t| serde_json::from_str(&t).ok())
         .filter(|v: &serde_json::Value| v.is_object())
         .unwrap_or_else(|| serde_json::json!({}));
-    root["pins"] = serde_json::json!(pins);
+    root[key] = serde_json::json!(values);
     let tmp = path.with_extension("json.tmp");
     if let Ok(text) = serde_json::to_string_pretty(&root) {
         if std::fs::write(&tmp, format!("{text}\n")).is_ok() {

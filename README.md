@@ -13,6 +13,7 @@
 - 启动弹跳：点按未运行的应用，图标上下弹几下
 - 运行指示点：有窗口的应用在图标下显示小圆点（跨工作区统计）
 - 左键：已运行 → 聚焦（多窗口时依次切换）；未运行 → 启动
+- 多开：设置里给终端类应用打开「多开」，之后每点一次都开新窗口；没开多开的应用在后台跑着但没窗口（比如 QQ 缩到托盘）时只回弹，不会再启一份弹「重复登录」
 - 右键：应用菜单（新窗口 / 退出）
 - 自动隐藏：鼠标离开后滑下；触发带横贯整条屏幕边，光标碰到边缘任意位置就弹出
 - 设置窗口：图标尺寸/间距、停靠边、明暗主题、不透明度、动画时长都在 GUI 里调，改完立刻生效
@@ -120,6 +121,8 @@ niri-dock edit
 增删应用都在设置窗口的「应用」一栏：
 
 - 点「移除」把应用移出 dock
+- 每个应用右边的「多开」开关：打开后，应用已经启动时再点图标就开一个新窗口
+  （终端类应用用；QQ 这种单实例应用别打开，否则会重复启动）
 - 加进来立刻生效：dock 监听配置文件变化，不用重启进程
 - 点「添加应用…」打开多选框：窗口会自动扫描本机的 `.desktop`（`XDG_DATA_HOME`、
   `XDG_DATA_DIRS` 里的 `applications/`），列出还没加进来的应用，可以搜索、
@@ -152,6 +155,7 @@ niri-dock edit
   "hot_zone": 6,
   "tooltip": true,
   "context_menu": true,
+  "multi_window": [],
   "reveal_ms": 280,
   "magnify": true,
   "magnify_peak": 1.30
@@ -168,6 +172,7 @@ niri-dock edit
 - `theme`：`dark` / `light`
 - `autohide` / `hide_delay_ms` / `reveal_ms`：自动隐藏、收起延迟、滑出动画时长（ms）
 - `hot_zone`：屏幕边缘触发带的厚度（px），这条带横贯整条屏幕边，鼠标碰到任意位置都会唤出 dock
+- `multi_window`：允许多开的 pin 列表；应用已经在跑时，点图标不再聚焦，而是再起一个实例开新窗口（Ghostty 这类终端用单实例模式就能开新窗口）。设置窗口里每个应用右边有「多开」开关，勾上就是加进这个列表
 - `magnify` / `magnify_peak`：悬停放大开关与峰值倍数（峰值上限 1.30）
 
 想让图标更小但 dock 不变，只调 `icon_size`；想让 dock 更紧凑，调 `slot` 和 `spacing`。
@@ -183,6 +188,7 @@ NIRI_DOCK_LOG=debug niri-dock restart   # 用调试级别重跑，细节全进�
 NIRI_DOCK_HOVER=2 niri-dock       # 固定第 3 个图标为悬停态（截图用）
 NIRI_DOCK_BOUNCE=1 niri-dock      # 启动时触发一次弹跳
 NIRI_DOCK_MENU=2 niri-dock        # 直接弹出第 3 个图标的右键菜单
+NIRI_DOCK_CLICK=2 niri-dock       # 启动后直接点一下第 3 个图标（不用动鼠标）
 NIRI_DOCK_ADD_DIALOG=1 niri-dock --settings   # 直接打开「添加应用」多选框
 ```
 

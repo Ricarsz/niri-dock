@@ -7,6 +7,7 @@ mod dock;
 mod icons;
 mod log;
 mod niri;
+mod process;
 mod settings;
 mod style;
 

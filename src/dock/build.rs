@@ -18,9 +18,11 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use crate::config::{load_config, save_pins, Config};
 use crate::desktop::*;
 use crate::niri::*;
+use crate::process::app_running;
 
+use super::launch;
 use super::ui::Ui;
-use super::Item;
+use super::{Action, Item};
 
 pub(crate) fn dump_matches() {
     let cfg = load_config();
@@ -303,6 +305,7 @@ pub(crate) fn build_ui(
         {
             let u = ui.clone();
             let e = entry.clone();
+            let multi_window = cfg.multi_window.clone();
             button.connect_clicked(move |_| {
                 let keys = match_keys(&e);
                 let mut ids: Vec<(i64, bool)> = {
@@ -313,17 +316,24 @@ pub(crate) fn build_ui(
                         .collect()
                 };
                 ids.sort_by_key(|(id, _)| *id);
-                if ids.is_empty() {
-                    spawn_exec(&e.exec);
-                    u.bounce(i);
-                    return;
+
+                let has_window = !ids.is_empty();
+                let running = !has_window && app_running(&e);
+                match launch::action(&e.id, &multi_window, has_window, running) {
+                    Action::Launch => {
+                        spawn_exec(&e.exec);
+                        u.bounce(i);
+                    }
+                    Action::Nudge => u.bounce(i),
+                    Action::Focus => {
+                        let next = ids
+                            .iter()
+                            .position(|(_, focused)| *focused)
+                            .map(|p| ids[(p + 1) % ids.len()].0)
+                            .unwrap_or(ids[0].0);
+                        niri_focus(next);
+                    }
                 }
-                let next = ids
-                    .iter()
-                    .position(|(_, focused)| *focused)
-                    .map(|p| ids[(p + 1) % ids.len()].0)
-                    .unwrap_or(ids[0].0);
-                niri_focus(next);
             });
         }
 
@@ -636,6 +646,20 @@ pub(crate) fn build_ui(
             });
         }
         panel.append(&done_holder);
+    }
+
+    // 调试：NIRI_DOCK_CLICK=<序号>，启动后直接点一下第 N 个图标。
+    // 不用真的移鼠标，方便在没有指针注入的环境里验证点击行为。
+    if let Some(index) = env::var("NIRI_DOCK_CLICK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        if let Some(button) = buttons.get(index).cloned() {
+            log_debug!("build", "调试点击：第 {index} 个图标");
+            glib::timeout_add_local_once(Duration::from_millis(600), move || {
+                button.emit_clicked();
+            });
+        }
     }
 
     (window, ui)

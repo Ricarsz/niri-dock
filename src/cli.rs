@@ -80,7 +80,7 @@ pub(crate) fn parse(args: &[String]) -> Cmd {
 pub(crate) fn pid_path() -> PathBuf {
     let dir = env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| env::temp_dir());
+        .unwrap_or_else(env::temp_dir);
     dir.join("niri-dock.pid")
 }
 

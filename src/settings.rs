@@ -6,7 +6,7 @@ use gtk4 as gtk;
 use gtk::prelude::*;
 use std::rc::Rc;
 
-use crate::config::{load_config, save_config, save_pins, Config};
+use crate::config::{load_config, save_config, save_multi_window, save_pins, Config};
 
 const CSS: &str = r#"
 window { background-color: #1c1c20; }
@@ -91,6 +91,33 @@ fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
 
                 let del = gtk::Button::with_label("移除");
                 del.set_valign(gtk::Align::Center);
+
+                // 多开：给终端这类「单实例、每次点开新窗口」的应用用
+                let multi = gtk::Switch::new();
+                multi.set_active(cfg.multi_window.iter().any(|m| m == pin));
+                multi.set_valign(gtk::Align::Center);
+                multi.set_tooltip_text(Some(
+                    "已经启动时再点一次就开新窗口（Ghostty 这类终端用；QQ 这种别开）",
+                ));
+                {
+                    let pin = pin.clone();
+                    multi.connect_state_set(move |_, active| {
+                        let cfg = load_config();
+                        let mut ids = cfg.multi_window;
+                        ids.retain(|m| m != &pin);
+                        if active {
+                            ids.push(pin.clone());
+                        }
+                        save_multi_window(&ids);
+                        gtk::glib::Propagation::Proceed
+                    });
+                }
+                let multi_label = gtk::Label::new(Some("多开"));
+                multi_label.add_css_class("hint");
+                let multi_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                multi_box.set_valign(gtk::Align::Center);
+                multi_box.append(&multi_label);
+                multi_box.append(&multi);
                 {
                     let pin = pin.clone();
                     let cell3 = cell2.clone();
@@ -109,6 +136,7 @@ fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
                 line.add_css_class("row");
                 line.append(&image);
                 line.append(&text);
+                line.append(&multi_box);
                 line.append(&del);
                 list2.append(&line);
             }
@@ -328,18 +356,17 @@ fn section(title: &str, rows: &[gtk::Box]) -> gtk::Box {
     wrap
 }
 
+/// 一个数值设置项：范围 + 步长决定 SpinButton，小数位数由步长推出来
 fn number(
     title: &str,
     hint: &str,
     value: f64,
-    min: f64,
-    max: f64,
+    range: std::ops::RangeInclusive<f64>,
     step: f64,
-    digits: u32,
     on_change: impl Fn(&mut Config, f64) + 'static,
 ) -> gtk::Box {
-    let spin = gtk::SpinButton::with_range(min, max, step);
-    spin.set_digits(digits);
+    let spin = gtk::SpinButton::with_range(*range.start(), *range.end(), step);
+    spin.set_digits(decimals(step));
     spin.set_value(value);
     spin.set_numeric(true);
     spin.add_css_class("spin");
@@ -353,6 +380,14 @@ fn number(
     });
 
     row(title, hint, &spin)
+}
+
+/// 步长的小数位数：`1.0` → 0，`0.01` → 2
+fn decimals(step: f64) -> u32 {
+    match format!("{step}").split_once('.') {
+        Some((_, frac)) => frac.len() as u32,
+        None => 0,
+    }
 }
 
 fn toggle(
@@ -450,60 +485,48 @@ pub fn run() -> glib::ExitCode {
                     "图标尺寸",
                     "图标本身的边长（像素）；只改图标，不改 dock 的长宽",
                     cfg.icon_size as f64,
-                    16.0,
-                    96.0,
+                    16.0..=96.0,
                     1.0,
-                    0,
                     |c, v| c.icon_size = v.round() as i32,
                 ),
                 number(
                     "图标槽位",
                     "每个图标占的格子边长（像素）；dock 的长宽由它决定",
                     cfg.slot as f64,
-                    32.0,
-                    112.0,
+                    32.0..=112.0,
                     1.0,
-                    0,
                     |c, v| c.slot = v.round() as i32,
                 ),
                 number(
                     "图标间距",
                     "相邻图标之间额外的空隙（像素）",
                     cfg.spacing as f64,
-                    0.0,
-                    40.0,
+                    0.0..=40.0,
                     1.0,
-                    0,
                     |c, v| c.spacing = v.round() as i32,
                 ),
                 number(
                     "面板内边距",
                     "面板边缘到图标之间的留白（像素）",
                     cfg.padding as f64,
-                    0.0,
-                    32.0,
+                    0.0..=32.0,
                     1.0,
-                    0,
                     |c, v| c.padding = v.round() as i32,
                 ),
                 number(
                     "面板圆角",
                     "面板的圆角半径（像素），22 接近 macOS",
                     cfg.panel_radius as f64,
-                    0.0,
-                    44.0,
+                    0.0..=44.0,
                     1.0,
-                    0,
                     |c, v| c.panel_radius = v.round() as i32,
                 ),
                 number(
                     "面板不透明度",
                     "1.00 完全不透明，0.00 全透明",
                     cfg.panel_opacity,
-                    0.15,
-                    1.0,
+                    0.15..=1.0,
                     0.01,
-                    2,
                     |c, v| c.panel_opacity = v,
                 ),
                 choice(
@@ -530,10 +553,8 @@ pub fn run() -> glib::ExitCode {
                     "离屏幕边缘",
                     "面板和停靠边之间的距离（像素）",
                     cfg.gap as f64,
-                    0.0,
-                    64.0,
+                    0.0..=64.0,
                     1.0,
-                    0,
                     |c, v| c.gap = v.round() as i32,
                 ),
             ],
@@ -552,30 +573,24 @@ pub fn run() -> glib::ExitCode {
                     "触发区高度",
                     "屏幕这条边上的触发带宽（像素），横贯整条边；鼠标碰到就弹出",
                     cfg.hot_zone as f64,
+                    1.0..=32.0,
                     1.0,
-                    32.0,
-                    1.0,
-                    0,
                     |c, v| c.hot_zone = v.round() as i32,
                 ),
                 number(
                     "动画时长",
                     "dock 滑出与收起用的时间（毫秒），大了更从容",
                     cfg.reveal_ms as f64,
-                    60.0,
-                    900.0,
+                    60.0..=900.0,
                     20.0,
-                    0,
                     |c, v| c.reveal_ms = v.round() as u64,
                 ),
                 number(
                     "隐藏延迟",
                     "鼠标离开后多久开始收起（毫秒）",
                     cfg.hide_delay_ms as f64,
-                    0.0,
-                    3000.0,
+                    0.0..=3000.0,
                     50.0,
-                    0,
                     |c, v| c.hide_delay_ms = v.round() as u64,
                 ),
                 toggle(
@@ -600,10 +615,8 @@ pub fn run() -> glib::ExitCode {
                     "放大峰值",
                     "悬停图标的放大倍数，1.30 比较克制",
                     cfg.magnify_peak,
-                    1.0,
-                    1.6,
+                    1.0..=1.6,
                     0.01,
-                    2,
                     |c, v| c.magnify_peak = v,
                 ),
             ],
@@ -623,8 +636,8 @@ pub fn run() -> glib::ExitCode {
             let app = app.clone();
             reset.connect_clicked(move |_| {
                 let pins = load_config().pins;
-                let mut def = Config::default();
-                def.pins = pins; // 保留用户自己排的应用
+                // 保留用户自己排的应用，其余恢复默认
+                let def = Config { pins, ..Default::default() };
                 save_config(&def);
                 window.close();
                 app.activate();
