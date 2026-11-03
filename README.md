@@ -198,6 +198,25 @@ NIRI_DOCK_ADD_DIALOG=1 niri-dock --settings   # 直接打开「添加应用」�
 报错不会丢。日志里能看到：启动与配置、niri 连接与窗口事件、面板显示/隐藏、
 重建原因、编辑模式的排序/增删。
 
+## 源码结构
+
+- `src/main.rs`：进程入口，启动后把「配置变了 → 重建面板」交给 `reload`
+- `src/cli.rs`：命令行、单实例、D-Bus action
+- `src/config.rs`：配置读写；只改目标键，未知字段原样保留
+- `src/reload.rs`：监视配置目录（inotify + 防抖，失败退回轮询）
+- `src/dock/`：dock 本体
+  - `ui.rs`：显示 / 隐藏、定时器、放大与弹跳
+  - `geometry.rs`：纯几何计算（槽位、预留空间、折叠尺寸、拖放位置）
+  - `launch.rs`：点击策略（启动 / 聚焦 / 回弹）
+  - `build/`：窗口与面板搭建（`window.rs` layer-shell 窗口与 reveal、`tile.rs` 单个图标与右键菜单、`edit.rs` 编辑模式、`mod.rs` 组装）
+- `src/settings/`：设置窗口（`mod.rs` 组装、`form.rs` 通用控件、`pins.rs` 应用列表与多选对话框）
+- `src/desktop.rs`：`*.desktop` 解析与窗口匹配
+- `src/process.rs`：进程存活判断（点击时区分「没窗口但还在跑」）
+- `src/niri.rs`：niri IPC 与窗口跟踪
+- `src/style.rs` / `src/icons.rs`：CSS 与图标查找
+
+纯逻辑（几何、点击策略、配置合并、进程匹配）都往下拆成了不依赖 GTK 的函数，`cargo test` 可以直接覆盖。
+
 ## 图标
 
 图标先按 `.desktop` 里 `Icon=` 的名字走图标主题；名字找不到（或者 `Icon=` 直接写的是
