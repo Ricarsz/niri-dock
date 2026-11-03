@@ -171,16 +171,24 @@ pub(crate) fn save_multi_window(ids: &[String]) {
     save_list("multi_window", ids);
 }
 
+/// 在现有的 JSON 根对象上只改一个键；不是对象、读不出来就当空对象
+fn merge_list(mut root: serde_json::Value, key: &str, values: &[String]) -> serde_json::Value {
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    root[key] = serde_json::json!(values);
+    root
+}
+
 fn save_list(key: &str, values: &[String]) {
     let dir = config_dir();
     let _ = std::fs::create_dir_all(&dir);
     let path = config_path();
-    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+    let root: serde_json::Value = std::fs::read_to_string(&path)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
-        .filter(|v: &serde_json::Value| v.is_object())
         .unwrap_or_else(|| serde_json::json!({}));
-    root[key] = serde_json::json!(values);
+    let root = merge_list(root, key, values);
     let tmp = path.with_extension("json.tmp");
     if let Ok(text) = serde_json::to_string_pretty(&root) {
         if std::fs::write(&tmp, format!("{text}\n")).is_ok() {
@@ -226,4 +234,47 @@ pub(crate) fn config_mtime() -> Option<std::time::SystemTime> {
     std::fs::metadata(config_path())
         .and_then(|m| m.modified())
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_keys_survive_a_list_write() {
+        let root = serde_json::json!({
+            "pins": ["a"],
+            "hot_zone": 3,
+            "some_future_key": {"nested": true}
+        });
+        let after = merge_list(root, "pins", &["b".to_string(), "c".to_string()]);
+        assert_eq!(after["pins"], serde_json::json!(["b", "c"]));
+        assert_eq!(after["hot_zone"], serde_json::json!(3));
+        assert_eq!(
+            after["some_future_key"],
+            serde_json::json!({"nested": true})
+        );
+    }
+
+    #[test]
+    fn a_broken_root_becomes_an_object() {
+        let after = merge_list(serde_json::json!("nonsense"), "multi_window", &["x".into()]);
+        assert_eq!(after["multi_window"], serde_json::json!(["x"]));
+    }
+
+    #[test]
+    fn missing_fields_use_the_defaults() {
+        let cfg: Config = serde_json::from_str(r#"{"pins": ["foot"]}"#).unwrap();
+        assert_eq!(cfg.pins, vec!["foot"]);
+        assert!(cfg.multi_window.is_empty());
+        assert_eq!(cfg.hot_zone, d_hot_zone());
+        assert_eq!(cfg.position, "bottom");
+        assert!(cfg.autohide);
+    }
+
+    #[test]
+    fn unknown_fields_are_ignored() {
+        let cfg: Config = serde_json::from_str(r#"{"pins": [], "future": 1}"#).unwrap();
+        assert!(cfg.pins.is_empty());
+    }
 }
