@@ -78,7 +78,9 @@ fn walk(dir: &Path, depth: usize, map: &mut HashMap<String, PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_dir() {
             walk(&path, depth + 1, map);
             continue;

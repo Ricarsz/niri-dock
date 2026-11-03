@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::Value;
 use crate::{log_debug, log_info};
+use serde_json::Value;
 // ───────────────────────── niri IPC ─────────────────────────
 
 #[derive(Debug, Clone, Default)]
@@ -50,14 +50,27 @@ pub(crate) fn niri_close(id: i64) {
 pub(crate) fn parse_win(v: &Value) -> Option<Win> {
     Some(Win {
         id: v.get("id")?.as_i64()?,
-        title: v.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-        app_id: v.get("app_id").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-        is_focused: v.get("is_focused").and_then(|t| t.as_bool()).unwrap_or(false),
+        title: v
+            .get("title")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        app_id: v
+            .get("app_id")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string(),
+        is_focused: v
+            .get("is_focused")
+            .and_then(|t| t.as_bool())
+            .unwrap_or(false),
     })
 }
 
 pub(crate) fn fetch_all(windows: &Arc<Mutex<HashMap<i64, Win>>>) {
-    let Some(resp) = niri_request(serde_json::json!("Windows")) else { return };
+    let Some(resp) = niri_request(serde_json::json!("Windows")) else {
+        return;
+    };
     let Some(list) = resp
         .get("Ok")
         .and_then(|v| v.get("Windows"))
@@ -117,14 +130,24 @@ pub(crate) fn spawn_event_thread(
                 continue;
             };
             let mut changed = false;
-            if let Some(v) = ev.get("WindowOpenedOrChanged").and_then(|v| v.get("window")) {
+            if let Some(v) = ev
+                .get("WindowOpenedOrChanged")
+                .and_then(|v| v.get("window"))
+            {
                 if let Some(w) = parse_win(v) {
                     log_debug!("niri", "窗口变化 id={} app={}", w.id, w.app_id);
-                    windows.lock().unwrap_or_else(|e| e.into_inner()).insert(w.id, w);
+                    windows
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(w.id, w);
                     changed = true;
                 }
             }
-            if let Some(v) = ev.get("WindowClosed").and_then(|v| v.get("id")).and_then(|v| v.as_i64()) {
+            if let Some(v) = ev
+                .get("WindowClosed")
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_i64())
+            {
                 log_debug!("niri", "窗口关闭 id={v}");
                 windows.lock().unwrap_or_else(|e| e.into_inner()).remove(&v);
                 changed = true;
@@ -162,4 +185,3 @@ pub(crate) fn spawn_event_thread(
         std::thread::sleep(Duration::from_millis(500));
     });
 }
-

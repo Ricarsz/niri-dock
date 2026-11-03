@@ -1,9 +1,9 @@
 //! desktop 条目解析：从 `*.desktop` 里取名字、图标、命令行，并做窗口匹配。
 
+use crate::log_debug;
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use crate::{log_debug};
 
 // ─────────────────────── desktop 条目 ───────────────────────
 
@@ -42,7 +42,10 @@ pub(crate) fn data_dirs() -> Vec<PathBuf> {
 
 pub(crate) fn parse_desktop(id: &str, path: &Path) -> Option<AppEntry> {
     let text = std::fs::read_to_string(path).ok()?;
-    let mut entry = AppEntry { id: id.to_string(), ..Default::default() };
+    let mut entry = AppEntry {
+        id: id.to_string(),
+        ..Default::default()
+    };
     let mut in_main = false;
     for line in text.lines() {
         let line = line.trim();
@@ -116,13 +119,17 @@ pub(crate) fn load_entries() -> HashMap<String, AppEntry> {
     let mut map = HashMap::new();
     for base in data_dirs() {
         let appdir = base.join("applications");
-        let Ok(rd) = std::fs::read_dir(&appdir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&appdir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let path = e.path();
             if path.extension().and_then(|s| s.to_str()) != Some("desktop") {
                 continue;
             }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
             if map.contains_key(stem) {
                 continue;
             }
@@ -140,7 +147,10 @@ pub(crate) fn match_keys(entry: &AppEntry) -> Vec<String> {
         keys.push(w.to_lowercase());
     }
     let exec_first = entry.exec.split_whitespace().next().unwrap_or("");
-    let base = Path::new(exec_first).file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let base = Path::new(exec_first)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
     if !base.is_empty() {
         keys.push(base.to_lowercase());
     }
@@ -153,7 +163,8 @@ pub(crate) fn app_matches(keys: &[String], app_id: &str) -> bool {
     if app.is_empty() {
         return false;
     }
-    keys.iter().any(|k| !k.is_empty() && (app == *k || app.contains(k)))
+    keys.iter()
+        .any(|k| !k.is_empty() && (app == *k || app.contains(k)))
 }
 
 pub(crate) fn strip_field_codes(exec: &str) -> String {
@@ -186,7 +197,9 @@ pub(crate) fn spawn_exec(exec: &str) {
     // 启动的应用应当落在用户家目录，而不是 dock 的工作目录。
     let home = home_dir();
     let mut command = std::process::Command::new("sh");
-    command.arg("-c").arg(format!("setsid {cmd} >/dev/null 2>&1 &"));
+    command
+        .arg("-c")
+        .arg(format!("setsid {cmd} >/dev/null 2>&1 &"));
     if let Some(home) = home {
         command.current_dir(home);
     }
@@ -194,12 +207,17 @@ pub(crate) fn spawn_exec(exec: &str) {
     // 那种环境里的 NO_COLOR / TERM=dumb / COLORTERM 会一路继承进终端和里面的命令，
     // 让 eza、bat 之类认为「不该上色」。这里统一清掉，具体终端（foot/kitty/ghostty…）
     // 会自己给子进程设 TERM/COLORTERM，不需要我们代劳。
-    for var in ["NO_COLOR", "TERM", "COLORTERM", "CLICOLOR", "CLICOLOR_FORCE"] {
+    for var in [
+        "NO_COLOR",
+        "TERM",
+        "COLORTERM",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+    ] {
         command.env_remove(var);
     }
     let _ = command.spawn();
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -220,12 +238,30 @@ mod tests {
         let user = root.join("a/applications");
         let system = root.join("b/applications");
         // 同名 id：用户目录优先
-        write_desktop(&user.join("dup.desktop"), "[Desktop Entry]\nName=From User\nExec=dup %U\n");
-        write_desktop(&system.join("dup.desktop"), "[Desktop Entry]\nName=From System\nExec=dup %U\n");
-        write_desktop(&user.join("hidden.desktop"), "[Desktop Entry]\nName=Ghost\nExec=ghost\nHidden=true\n");
-        write_desktop(&user.join("silent.desktop"), "[Desktop Entry]\nName=Silent\nExec=silent\nNoDisplay=true\n");
-        write_desktop(&user.join("broken.desktop"), "[Desktop Entry]\nName=Broken\nExec=broken\nTryExec=nope-does-not-exist-xyz\n");
-        write_desktop(&user.join("good.desktop"), "[Desktop Entry]\nName=Good\nExec=good\n");
+        write_desktop(
+            &user.join("dup.desktop"),
+            "[Desktop Entry]\nName=From User\nExec=dup %U\n",
+        );
+        write_desktop(
+            &system.join("dup.desktop"),
+            "[Desktop Entry]\nName=From System\nExec=dup %U\n",
+        );
+        write_desktop(
+            &user.join("hidden.desktop"),
+            "[Desktop Entry]\nName=Ghost\nExec=ghost\nHidden=true\n",
+        );
+        write_desktop(
+            &user.join("silent.desktop"),
+            "[Desktop Entry]\nName=Silent\nExec=silent\nNoDisplay=true\n",
+        );
+        write_desktop(
+            &user.join("broken.desktop"),
+            "[Desktop Entry]\nName=Broken\nExec=broken\nTryExec=nope-does-not-exist-xyz\n",
+        );
+        write_desktop(
+            &user.join("good.desktop"),
+            "[Desktop Entry]\nName=Good\nExec=good\n",
+        );
 
         std::env::set_var("XDG_DATA_HOME", root.join("a"));
         std::env::set_var("XDG_DATA_DIRS", root.join("b"));
@@ -255,7 +291,11 @@ mod tests {
 
     #[test]
     fn matches_by_id_wmclass_and_binary() {
-        let e = entry("org.gnome.Nautilus", Some("Nautilus"), "/usr/bin/nautilus --new-window %U");
+        let e = entry(
+            "org.gnome.Nautilus",
+            Some("Nautilus"),
+            "/usr/bin/nautilus --new-window %U",
+        );
         let keys = match_keys(&e);
         assert!(app_matches(&keys, "org.gnome.Nautilus"));
         assert!(app_matches(&keys, "nautilus"));

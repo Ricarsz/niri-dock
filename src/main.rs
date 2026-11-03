@@ -19,8 +19,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 use config::{config_mtime, load_config};
 use desktop::load_entries;
@@ -96,8 +96,7 @@ fn main() -> glib::ExitCode {
         *current.borrow_mut() = Some(ui.clone());
         cli::register_actions(app, &ui, &trigger);
         cli::write_pid();
-        let slot: Rc<RefCell<Option<gtk::ApplicationWindow>>> =
-            Rc::new(RefCell::new(Some(win)));
+        let slot: Rc<RefCell<Option<gtk::ApplicationWindow>>> = Rc::new(RefCell::new(Some(win)));
         // 配置变化：用 inotify 的目录监视替代 600ms 轮询；事件再做一个 120ms 防抖。
         let rebuild = {
             let app2 = app.clone();
@@ -105,8 +104,7 @@ fn main() -> glib::ExitCode {
             let current2 = current.clone();
             let windows2 = windows.clone();
             let epoch2 = epoch.clone();
-            let last_pos: Rc<RefCell<String>> =
-                Rc::new(RefCell::new(initial_pos.clone()));
+            let last_pos: Rc<RefCell<String>> = Rc::new(RefCell::new(initial_pos.clone()));
             let trigger2 = trigger.clone();
             Rc::new(move || {
                 log_debug!("rebuild", "开始重建面板");
@@ -150,7 +148,10 @@ fn main() -> glib::ExitCode {
         *trigger.borrow_mut() = Some(rebuild.clone());
 
         let dir = gtk::gio::File::for_path(config::config_dir());
-        let monitor = dir.monitor_directory(gtk::gio::FileMonitorFlags::WATCH_MOVES, gtk::gio::Cancellable::NONE);
+        let monitor = dir.monitor_directory(
+            gtk::gio::FileMonitorFlags::WATCH_MOVES,
+            gtk::gio::Cancellable::NONE,
+        );
         match monitor {
             Ok(monitor) => {
                 let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
@@ -166,7 +167,10 @@ fn main() -> glib::ExitCode {
                         return;
                     }
                     use gtk::gio::FileMonitorEvent as E;
-                    if matches!(event, E::Deleted | E::MovedOut | E::Unmounted | E::PreUnmount) {
+                    if matches!(
+                        event,
+                        E::Deleted | E::MovedOut | E::Unmounted | E::PreUnmount
+                    ) {
                         return;
                     }
                     if let Some(id) = pending.borrow_mut().take() {
@@ -202,4 +206,3 @@ fn main() -> glib::ExitCode {
 
     app.run()
 }
-

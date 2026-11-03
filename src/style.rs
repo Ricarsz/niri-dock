@@ -25,7 +25,11 @@ pub(crate) fn magnify_target(cfg: &Config, index: usize, hover: Option<usize>) -
 pub(crate) fn css_text(cfg: &Config) -> String {
     let light = cfg.theme.eq_ignore_ascii_case("light");
     let opacity = cfg.panel_opacity.clamp(0.0, 1.0);
-    let (bg_r, bg_g, bg_b) = if light { (246.0, 246.0, 248.0) } else { (38.0, 38.0, 42.0) };
+    let (bg_r, bg_g, bg_b) = if light {
+        (246.0, 246.0, 248.0)
+    } else {
+        (38.0, 38.0, 42.0)
+    };
     // 圆角跟着图标尺寸走，小图标别留一个巨圆角
     let radius = cfg.panel_radius.max(0);
     let pad = cfg.padding.max(0);
@@ -203,4 +207,3 @@ pub(crate) fn apply_css(cfg: &Config) {
         }
     });
 }
-

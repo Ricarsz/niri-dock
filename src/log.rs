@@ -28,7 +28,11 @@ impl Level {
     }
 
     fn from_env() -> Level {
-        match std::env::var("NIRI_DOCK_LOG").unwrap_or_default().to_lowercase().as_str() {
+        match std::env::var("NIRI_DOCK_LOG")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
             "off" | "none" | "0" | "false" => Level::Off,
             "error" => Level::Error,
             "info" => Level::Info,

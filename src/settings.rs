@@ -2,8 +2,8 @@
 //! dock 进程每 600ms 检查一次文件时间戳，改了会自动重建面板。
 
 use crate::log_info;
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use std::rc::Rc;
 
 use crate::config::{load_config, save_config, save_multi_window, save_pins, Config};
@@ -166,11 +166,14 @@ fn apps_section(window: &gtk::ApplicationWindow) -> gtk::Box {
                 let win = window.clone();
                 add.connect_clicked(move |_| {
                     let f = cell3.clone();
-                    open_add_dialog(&win, Rc::new(move || {
-                        if let Some(cb) = f.borrow().as_ref() {
-                            cb();
-                        }
-                    }));
+                    open_add_dialog(
+                        &win,
+                        Rc::new(move || {
+                            if let Some(cb) = f.borrow().as_ref() {
+                                cb();
+                            }
+                        }),
+                    );
                 });
             }
 
@@ -234,7 +237,8 @@ fn open_add_dialog(parent: &gtk::ApplicationWindow, on_added: Rc<dyn Fn()>) {
         line.append(&check);
         line.append(&text);
         list.append(&line);
-        rows.borrow_mut().push((entry.id.clone(), entry.name.clone(), check));
+        rows.borrow_mut()
+            .push((entry.id.clone(), entry.name.clone(), check));
     }
 
     // 搜索只过滤，不重建列表
@@ -271,7 +275,12 @@ fn open_add_dialog(parent: &gtk::ApplicationWindow, on_added: Rc<dyn Fn()>) {
                 .filter(|(_, _, c)| c.is_active())
                 .map(|(id, _, _)| id.clone())
                 .collect();
-            log_info!("settings", "添加 {} 个应用: {}", picked.len(), picked.join(", "));
+            log_info!(
+                "settings",
+                "添加 {} 个应用: {}",
+                picked.len(),
+                picked.join(", ")
+            );
             if !picked.is_empty() {
                 let mut cfg = load_config();
                 for id in picked {

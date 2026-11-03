@@ -13,4 +13,3 @@ pub(crate) struct Item {
     pub(crate) slot: gtk::Overlay,
     pub(crate) level: std::cell::Cell<usize>,
 }
-

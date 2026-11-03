@@ -4,15 +4,15 @@
 //! （start/stop/restart/status），要么通过 D-Bus 调用 dock 注册的 GAction
 //! （toggle/show/hide/reload/quit），不引入额外的守护进程或 socket 协议。
 
-use std::io::Write;
 use std::env;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use gtk4 as gtk;
 use gtk::gio;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 pub(crate) const APP_ID: &str = "io.github.ricarsz.niridock";
 
@@ -124,10 +124,8 @@ pub(crate) fn activate_action(name: &str) -> bool {
     let Ok(conn) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
         return false;
     };
-    let Ok(params) = glib::Variant::parse(
-        None,
-        &format!("('{name}', @av [], @a{{sv}} {{}})"),
-    ) else {
+    let Ok(params) = glib::Variant::parse(None, &format!("('{name}', @av [], @a{{sv}} {{}})"))
+    else {
         return false;
     };
     conn.call_sync(
@@ -160,7 +158,13 @@ fn spawn_detached() -> bool {
         cmd.current_dir(home);
     }
     // 别把 agent shell 的脏环境带进去
-    for var in ["NO_COLOR", "TERM", "COLORTERM", "CLICOLOR", "CLICOLOR_FORCE"] {
+    for var in [
+        "NO_COLOR",
+        "TERM",
+        "COLORTERM",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+    ] {
         cmd.env_remove(var);
     }
     cmd.spawn().is_ok()
@@ -171,7 +175,10 @@ fn stop_running() -> bool {
         clear_pid();
         return false;
     };
-    let _ = Command::new("kill").arg("-TERM").arg(pid.to_string()).status();
+    let _ = Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status();
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         if !alive(pid) {
@@ -180,7 +187,10 @@ fn stop_running() -> bool {
         }
         std::thread::sleep(Duration::from_millis(60));
     }
-    let _ = Command::new("kill").arg("-KILL").arg(pid.to_string()).status();
+    let _ = Command::new("kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .status();
     clear_pid();
     true
 }
@@ -191,8 +201,18 @@ fn note_to_log(msg: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "{}  {:5} {:<8} {msg}", crate::log::stamp(), "info", "cli");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(
+            f,
+            "{}  {:5} {:<8} {msg}",
+            crate::log::stamp(),
+            "info",
+            "cli"
+        );
     }
 }
 
@@ -222,11 +242,18 @@ fn print_status() {
     }
     say!("版本    {}", env!("CARGO_PKG_VERSION"));
     say!("配置    {}", cfg_path.display());
-    say!("日志    {}（niri-dock logs）", crate::log::log_file().display());
+    say!(
+        "日志    {}（niri-dock logs）",
+        crate::log::log_file().display()
+    );
     let cfg = crate::config::load_config();
     say!(
         "外观    icon {} / slot {} / spacing {} / {}, {}",
-        cfg.icon_size, cfg.slot, cfg.spacing, cfg.position, cfg.theme
+        cfg.icon_size,
+        cfg.slot,
+        cfg.spacing,
+        cfg.position,
+        cfg.theme
     );
     say!("图标    {} 个", cfg.pins.len());
 }
@@ -406,4 +433,3 @@ pub(crate) fn register_actions(
         );
     }
 }
-

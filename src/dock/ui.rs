@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::log_debug;
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 
 use crate::config::Config;
 use crate::desktop::*;
@@ -123,8 +123,16 @@ impl Ui {
         let (cw, ch) = self.collapsed_size_request();
         // 沿屏幕那条轴要显式给尺寸：留 -1 时 GDK 会按 0 算，gtk4-layer-shell 只能
         // 退回 200px 默认值（还会打 gdk_wayland_toplevel_compute_size 的 critical）。
-        let cw = if cw < 0 { self.window.width().max(1) } else { cw };
-        let ch = if ch < 0 { self.window.height().max(1) } else { ch };
+        let cw = if cw < 0 {
+            self.window.width().max(1)
+        } else {
+            cw
+        };
+        let ch = if ch < 0 {
+            self.window.height().max(1)
+        } else {
+            ch
+        };
         let settle = self.cfg.reveal_ms.clamp(60, 900) + 20;
         glib::timeout_add_local_once(Duration::from_millis(settle), move || {
             if shown.get() {
@@ -140,7 +148,10 @@ impl Ui {
     /// 折叠态的窗口尺寸请求：沿停靠边的方向只留 hot_zone，其余交给内容
     fn collapsed_size_request(&self) -> (i32, i32) {
         let hot = self.cfg.hot_zone.clamp(1, 32);
-        if matches!(self.cfg.position.to_ascii_lowercase().as_str(), "left" | "right") {
+        if matches!(
+            self.cfg.position.to_ascii_lowercase().as_str(),
+            "left" | "right"
+        ) {
             (hot, -1)
         } else {
             (-1, hot)
@@ -209,7 +220,8 @@ impl Ui {
             let level = (((scale - 1.0) / MAG_STEP).round() as usize).min(MAG_STEPS);
             if item.level.get() != level {
                 if item.level.get() > 0 {
-                    item.button.remove_css_class(&format!("m{}", item.level.get()));
+                    item.button
+                        .remove_css_class(&format!("m{}", item.level.get()));
                 }
                 if level > 0 {
                     item.button.add_css_class(&format!("m{level}"));
@@ -239,4 +251,3 @@ impl Ui {
         }
     }
 }
-

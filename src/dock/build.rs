@@ -5,14 +5,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::log_debug;
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::config::{load_config, save_pins, Config};
@@ -39,13 +39,19 @@ pub(crate) fn dump_matches() {
                     .filter(|w| app_matches(&keys, &w.app_id))
                     .map(|w| w.app_id.clone())
                     .collect();
-                println!("{pin:<26} icon={:<24} keys={:?} hits={:?}", e.icon, keys, hits);
+                println!(
+                    "{pin:<26} icon={:<24} keys={:?} hits={:?}",
+                    e.icon, keys, hits
+                );
             }
             None => println!("{pin:<26} <no desktop entry>"),
         }
     }
     for w in map.values() {
-        println!("window {} app_id={} focused={}", w.id, w.app_id, w.is_focused);
+        println!(
+            "window {} app_id={} focused={}",
+            w.id, w.app_id, w.is_focused
+        );
     }
 }
 
@@ -100,7 +106,11 @@ pub(crate) fn build_ui(
     // 重建时复用已有窗口：只换内容，不销毁/重建 surface
     // （每建一次窗口要多花 ~1.4MB 显存/纹理，而且会闪一下）
     let reused = reuse_window.is_some();
-    log_debug!("build", "构建面板：{} 个图标，复用窗口={reused}", cfg.pins.len());
+    log_debug!(
+        "build",
+        "构建面板：{} 个图标，复用窗口={reused}",
+        cfg.pins.len()
+    );
     let window = match reuse_window {
         Some(w) => w,
         None => {
@@ -137,7 +147,11 @@ pub(crate) fn build_ui(
     window.set_margin(edge, 0);
 
     let panel = gtk::Box::new(
-        if horizontal { gtk::Orientation::Horizontal } else { gtk::Orientation::Vertical },
+        if horizontal {
+            gtk::Orientation::Horizontal
+        } else {
+            gtk::Orientation::Vertical
+        },
         0,
     );
     panel.add_css_class("dock-panel");
@@ -184,7 +198,11 @@ pub(crate) fn build_ui(
     // 槽位决定面板长宽，图标边长只影响图标本身 —— 所以改图标大小不会撑大 dock
     let across = cfg.slot.clamp(16, 160);
     let along = across + cfg.spacing.max(0);
-    let (slot_w, slot_h) = if horizontal { (along, across) } else { (across, along) };
+    let (slot_w, slot_h) = if horizontal {
+        (along, across)
+    } else {
+        (across, along)
+    };
 
     for (i, pin) in cfg.pins.iter().enumerate() {
         let entry = entries.get(pin).cloned().unwrap_or_else(|| AppEntry {
@@ -469,11 +487,15 @@ pub(crate) fn build_ui(
     // 图标比格子还大时也要留出超出的部分
     let tall_icon = (cfg.icon_size + item_bottom_margin(across, cfg.icon_size)
         - (across + cfg.padding.max(0)))
-        .max(0);
+    .max(0);
     let room = growth.max(tall_icon);
 
     let pad_cross = gtk::Box::new(
-        if horizontal { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal },
+        if horizontal {
+            gtk::Orientation::Vertical
+        } else {
+            gtk::Orientation::Horizontal
+        },
         0,
     );
     if horizontal {
@@ -483,7 +505,11 @@ pub(crate) fn build_ui(
     }
 
     let line = gtk::Box::new(
-        if horizontal { gtk::Orientation::Horizontal } else { gtk::Orientation::Vertical },
+        if horizontal {
+            gtk::Orientation::Horizontal
+        } else {
+            gtk::Orientation::Vertical
+        },
         0,
     );
     let pad_a = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -495,7 +521,11 @@ pub(crate) fn build_ui(
     line.append(&pad_b);
 
     let wrap = gtk::Box::new(
-        if horizontal { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal },
+        if horizontal {
+            gtk::Orientation::Vertical
+        } else {
+            gtk::Orientation::Horizontal
+        },
         0,
     );
     // 让出面板朝屏幕内侧的生长方向
@@ -513,7 +543,11 @@ pub(crate) fn build_ui(
     // 内容全透明、什么都不画，指针碰到这条带就展开。旧版另开一条横贯屏幕的热区窗口，
     // 两个 surface 在屏幕边重叠、互相抢指针的 enter/leave，会自激抖动，所以删掉。
     let outer = gtk::Box::new(
-        if horizontal { gtk::Orientation::Vertical } else { gtk::Orientation::Horizontal },
+        if horizontal {
+            gtk::Orientation::Vertical
+        } else {
+            gtk::Orientation::Horizontal
+        },
         0,
     );
     outer.append(&revealer);
@@ -572,7 +606,6 @@ pub(crate) fn build_ui(
             glib::timeout_add_local_once(Duration::from_millis(2500), move || u4.hide());
         }
     }
-
 
     if let Ok(v) = env::var("NIRI_DOCK_HOVER") {
         if let Ok(n) = v.parse::<usize>() {

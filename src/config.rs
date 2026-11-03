@@ -64,23 +64,53 @@ pub(crate) struct Config {
     pub(crate) panel_radius: i32,
 }
 
-pub(crate) fn d_spacing() -> i32 { 12 }
-pub(crate) fn d_slot() -> i32 { 64 }
-pub(crate) fn d_padding() -> i32 { 8 }
-pub(crate) fn d_position() -> String { "bottom".into() }
-pub(crate) fn d_theme() -> String { "dark".into() }
-pub(crate) fn d_opacity() -> f64 { 0.92 }
-pub(crate) fn d_radius() -> i32 { 22 }
+pub(crate) fn d_spacing() -> i32 {
+    12
+}
+pub(crate) fn d_slot() -> i32 {
+    64
+}
+pub(crate) fn d_padding() -> i32 {
+    8
+}
+pub(crate) fn d_position() -> String {
+    "bottom".into()
+}
+pub(crate) fn d_theme() -> String {
+    "dark".into()
+}
+pub(crate) fn d_opacity() -> f64 {
+    0.92
+}
+pub(crate) fn d_radius() -> i32 {
+    22
+}
 
-pub(crate) fn d_true() -> bool { true }
-pub(crate) fn d_hot_zone() -> i32 { 6 }
-pub(crate) fn d_reveal_ms() -> u64 { 280 }
-pub(crate) fn d_peak() -> f64 { 1.5 }
+pub(crate) fn d_true() -> bool {
+    true
+}
+pub(crate) fn d_hot_zone() -> i32 {
+    6
+}
+pub(crate) fn d_reveal_ms() -> u64 {
+    280
+}
+pub(crate) fn d_peak() -> f64 {
+    1.5
+}
 
-pub(crate) fn d_icon_size() -> i32 { 52 }
-pub(crate) fn d_gap() -> i32 { 10 }
-pub(crate) fn d_autohide() -> bool { true }
-pub(crate) fn d_delay() -> u64 { 650 }
+pub(crate) fn d_icon_size() -> i32 {
+    52
+}
+pub(crate) fn d_gap() -> i32 {
+    10
+}
+pub(crate) fn d_autohide() -> bool {
+    true
+}
+pub(crate) fn d_delay() -> u64 {
+    650
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -197,4 +227,3 @@ pub(crate) fn config_mtime() -> Option<std::time::SystemTime> {
         .and_then(|m| m.modified())
         .ok()
 }
-
