@@ -8,6 +8,7 @@ mod icons;
 mod log;
 mod niri;
 mod process;
+mod reload;
 mod settings;
 mod style;
 
@@ -17,12 +18,11 @@ use std::env;
 use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk4 as gtk;
 
-use config::{config_mtime, load_config};
+use config::load_config;
 use desktop::load_entries;
 use dock::build_ui;
 use niri::{spawn_event_thread, Win};
@@ -147,59 +147,8 @@ fn main() -> glib::ExitCode {
 
         *trigger.borrow_mut() = Some(rebuild.clone());
 
-        let dir = gtk::gio::File::for_path(config::config_dir());
-        let monitor = dir.monitor_directory(
-            gtk::gio::FileMonitorFlags::WATCH_MOVES,
-            gtk::gio::Cancellable::NONE,
-        );
-        match monitor {
-            Ok(monitor) => {
-                let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
-                monitor.connect_changed(move |_, file, _, event| {
-                    let name = file
-                        .basename()
-                        .map(|b| b.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    log_debug!("config", "监视事件 {event:?} {name}");
-                    // save_pins/save_config 是「写 .tmp 再 rename」，rename 只会在源文件上
-                    // 报 Renamed，所以 config.json.tmp 的动静也算配置变化
-                    if !name.starts_with("config.json") {
-                        return;
-                    }
-                    use gtk::gio::FileMonitorEvent as E;
-                    if matches!(
-                        event,
-                        E::Deleted | E::MovedOut | E::Unmounted | E::PreUnmount
-                    ) {
-                        return;
-                    }
-                    if let Some(id) = pending.borrow_mut().take() {
-                        id.remove();
-                    }
-                    let rebuild = rebuild.clone();
-                    let pending2 = pending.clone();
-                    let id = glib::timeout_add_local_once(Duration::from_millis(120), move || {
-                        *pending2.borrow_mut() = None;
-                        rebuild();
-                    });
-                    *pending.borrow_mut() = Some(id);
-                });
-                // 监视器必须活着
-                std::mem::forget(monitor);
-            }
-            Err(err) => {
-                log_warn!("config", "无法监视配置目录，退回轮询: {err}");
-                let last = Rc::new(RefCell::new(config_mtime()));
-                glib::timeout_add_local(Duration::from_millis(600), move || {
-                    let now = config_mtime();
-                    if now != *last.borrow() {
-                        *last.borrow_mut() = now;
-                        rebuild();
-                    }
-                    glib::ControlFlow::Continue
-                });
-            }
-        }
+        let hook: Rc<dyn Fn()> = rebuild.clone();
+        reload::watch(config::config_dir(), hook);
     });
 
     app.connect_shutdown(|_| cli::clear_pid());
