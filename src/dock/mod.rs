@@ -1,6 +1,7 @@
 //! dock 的窗口与交互。
 
 mod build;
+mod geometry;
 mod item;
 mod launch;
 mod ui;

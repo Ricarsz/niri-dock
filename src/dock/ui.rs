@@ -147,15 +147,7 @@ impl Ui {
 
     /// 折叠态的窗口尺寸请求：沿停靠边的方向只留 hot_zone，其余交给内容
     fn collapsed_size_request(&self) -> (i32, i32) {
-        let hot = self.cfg.hot_zone.clamp(1, 32);
-        if matches!(
-            self.cfg.position.to_ascii_lowercase().as_str(),
-            "left" | "right"
-        ) {
-            (hot, -1)
-        } else {
-            (-1, hot)
-        }
+        super::geometry::collapsed_request(&self.cfg.position, self.cfg.hot_zone)
     }
 
     /// 指针是否还在窗口范围内（含子控件，用运动控制器的实时状态，
