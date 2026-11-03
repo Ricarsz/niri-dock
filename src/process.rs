@@ -13,13 +13,18 @@ use crate::desktop::AppEntry;
 /// 是 `/opt/QQ/qq`。所以 exec 的第一个词和 StartupWMClass 都拿来比，只做
 /// 不区分大小写的整词比较，避免 `qq` 这种短名字误伤别的进程。
 pub(crate) fn app_running(entry: &AppEntry) -> bool {
+    find_pid(entry).is_some()
+}
+
+/// 找到跑着这个应用的第一个进程号（没有就是 `None`）。
+///
+/// 托盘激活要拿 pid 去 D-Bus 上认领 StatusNotifierItem，所以这里把扫描单独拆出来。
+pub(crate) fn find_pid(entry: &AppEntry) -> Option<i32> {
     let names = process_names(entry);
     if names.is_empty() {
-        return false;
+        return None;
     }
-    let Ok(procs) = std::fs::read_dir("/proc") else {
-        return false;
-    };
+    let procs = std::fs::read_dir("/proc").ok()?;
     for item in procs.flatten() {
         let file = item.file_name();
         let Some(pid) = file.to_str() else { continue };
@@ -28,10 +33,10 @@ pub(crate) fn app_running(entry: &AppEntry) -> bool {
         }
         let dir = item.path();
         if process_name_of(&dir).iter().any(|n| names.contains(n)) {
-            return true;
+            return pid.parse().ok();
         }
     }
-    false
+    None
 }
 
 /// 用来和进程名比对的候选：exec 第一个词的文件名、StartupWMClass

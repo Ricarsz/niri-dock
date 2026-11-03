@@ -11,6 +11,7 @@ mod process;
 mod reload;
 mod settings;
 mod style;
+mod tray;
 
 use std::cell::RefCell;
 use std::collections::HashMap;

@@ -135,7 +135,14 @@ pub(super) fn build(
                     spawn_exec(&e.exec);
                     u.bounce(i);
                 }
-                Action::Nudge => u.bounce(i),
+                Action::Nudge => {
+                    // 进程还在、窗口没了（缩到托盘）：点一下它的托盘项把窗口叫回来；
+                    // 没有托盘项的应用保持原来的回弹，绝不再启动第二份。
+                    let activated = crate::process::find_pid(&e).is_some_and(crate::tray::activate);
+                    if !activated {
+                        u.bounce(i);
+                    }
+                }
                 Action::Focus => {
                     let next = ids
                         .iter()
